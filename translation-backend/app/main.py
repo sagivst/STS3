@@ -87,6 +87,7 @@ class TranslationService:
         try:
             speech_config.speech_synthesis_language = language
             speech_config.speech_synthesis_voice_name = voice
+            speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Riff16Khz16BitMonoPcm)
             
             synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
             result = synthesizer.speak_text_async(text).get()
@@ -126,8 +127,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     rooms[room_id].append(websocket)
     
     user_languages[websocket] = {
-        "speaking": "en",
-        "listening": "ja"
+        "language": "en"
     }
     
     try:
@@ -137,52 +137,58 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             
             if message["type"] == "language_config":
                 user_languages[websocket] = {
-                    "speaking": message["speaking"],
-                    "listening": message["listening"]
+                    "language": message["language"]
                 }
                 await websocket.send_text(json.dumps({
                     "type": "language_config_updated",
-                    "speaking": message["speaking"],
-                    "listening": message["listening"]
+                    "language": message["language"]
                 }))
             
             elif message["type"] == "audio_data":
-                audio_data = base64.b64decode(message["audio"])  # Convert base64 to bytes
-                speaking_lang = user_languages[websocket]["speaking"]
-                listening_lang = user_languages[websocket]["listening"]
+                audio_data = base64.b64decode(message["audio"])
+                user_lang = user_languages[websocket]["language"]
+                
+                target_lang = "ja" if user_lang == "en" else "en"
                 
                 transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
-                    audio_data, speaking_lang
+                    audio_data, user_lang
                 )
                 
                 if transcript:
                     await websocket.send_text(json.dumps({
                         "type": "transcript",
                         "text": transcript,
-                        "language": speaking_lang
+                        "language": user_lang
                     }))
                     
                     translated_text, deepl_latency = await translation_service.measure_deepl_latency(
-                        transcript, speaking_lang, listening_lang
+                        transcript, user_lang, target_lang
                     )
                     
                     voice_map = {
                         "en": "en-US-JennyNeural",
-                        "ja": "ja-JP-NanamiNeural"
+                        "ja": "ja-JP-NanamiNeural",
+                        "es": "es-ES-ElviraNeural",
+                        "fr": "fr-FR-DeniseNeural",
+                        "de": "de-DE-KatjaNeural",
+                        "zh": "zh-CN-XiaoxiaoNeural"
                     }
-                    audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
-                        translated_text, listening_lang, voice_map.get(listening_lang, "en-US-JennyNeural")
-                    )
                     
                     for client in rooms[room_id]:
                         if client != websocket:
                             try:
+                                client_lang = user_languages.get(client, {}).get("language", "en")
+                                
+                                audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
+                                    translated_text, client_lang, voice_map.get(client_lang, "en-US-JennyNeural")
+                                )
+                                
                                 await client.send_text(json.dumps({
                                     "type": "translated_audio",
                                     "audio": audio_output.hex() if audio_output else "",
                                     "text": translated_text,
-                                    "source_language": speaking_lang,
-                                    "target_language": listening_lang
+                                    "source_language": user_lang,
+                                    "target_language": client_lang
                                 }))
                             except:
                                 pass
