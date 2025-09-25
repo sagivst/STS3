@@ -223,7 +223,7 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">תרגום סימולטני</h1>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Simultaneous Translation</h1>
           <p className="text-lg text-gray-600">Simultaneous Translation App</p>
         </div>
 
@@ -231,16 +231,16 @@ function App() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
-              הגדרות חדר ושפה
+              Room and Language Settings
             </CardTitle>
             <CardDescription>
-              הגדר את החדר ושפות הדיבור והשמיעה
+              Configure room and speaking/listening languages
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="text-sm font-medium mb-2 block">שם החדר</label>
+                <label className="text-sm font-medium mb-2 block">Room Name</label>
                 <Input
                   value={roomId}
                   onChange={(e) => setRoomId(e.target.value)}
@@ -250,7 +250,7 @@ function App() {
               </div>
               
               <div>
-                <label className="text-sm font-medium mb-2 block">שפת דיבור</label>
+                <label className="text-sm font-medium mb-2 block">Speaking Language</label>
                 <Select value={speakingLanguage} onValueChange={setSpeakingLanguage}>
                   <SelectTrigger>
                     <SelectValue />
@@ -266,7 +266,7 @@ function App() {
               </div>
               
               <div>
-                <label className="text-sm font-medium mb-2 block">שפת שמיעה</label>
+                <label className="text-sm font-medium mb-2 block">Listening Language</label>
                 <Select value={listeningLanguage} onValueChange={setListeningLanguage}>
                   <SelectTrigger>
                     <SelectValue />
@@ -292,12 +292,12 @@ function App() {
                 {isConnected ? (
                   <>
                     <WifiOff className="h-5 w-5" />
-                    התנתק מהחדר
+                    Disconnect from Room
                   </>
                 ) : (
                   <>
                     <Wifi className="h-5 w-5" />
-                    הצטרף לחדר
+                    Join Room
                   </>
                 )}
               </Button>
@@ -310,15 +310,15 @@ function App() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Mic className="h-5 w-5" />
-                מד דיבור
+                Speech Meter
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">רמת קול</span>
+                  <span className="text-sm text-gray-600">Audio Level</span>
                   <Badge variant={isRecording ? "default" : "secondary"}>
-                    {isRecording ? "מקליט" : "לא פעיל"}
+                    {isRecording ? "Recording" : "Inactive"}
                   </Badge>
                 </div>
                 <Progress value={audioLevel} className="h-3" />
@@ -330,15 +330,15 @@ function App() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Volume2 className="h-5 w-5" />
-                מד שמיעה
+                Audio Output Meter
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">רמת פלט</span>
+                  <span className="text-sm text-gray-600">Output Level</span>
                   <Badge variant={outputLevel > 0 ? "default" : "secondary"}>
-                    {outputLevel > 0 ? "מנגן" : "שקט"}
+                    {outputLevel > 0 ? "Playing" : "Silent"}
                   </Badge>
                 </div>
                 <Progress value={outputLevel} className="h-3" />
@@ -349,9 +349,9 @@ function App() {
 
         <Card>
           <CardHeader>
-            <CardTitle>טקסט מתומלל</CardTitle>
+            <CardTitle>Transcribed Text</CardTitle>
             <CardDescription>
-              הטקסט המתומלל בשפת הדיבור שלך
+              Transcribed text in your speaking language
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -360,7 +360,7 @@ function App() {
                 <p className="text-lg">{transcript}</p>
               ) : (
                 <p className="text-gray-500 italic">
-                  {isConnected ? "מחכה לדיבור..." : "התחבר לחדר כדי להתחיל"}
+                  {isConnected ? "Waiting for speech..." : "Connect to room to start"}
                 </p>
               )}
             </div>
@@ -369,9 +369,9 @@ function App() {
 
         <Card>
           <CardHeader>
-            <CardTitle>מדידת לייטנסי</CardTitle>
+            <CardTitle>Latency Measurement</CardTitle>
             <CardDescription>
-              זמני תגובה של שלושת השירותים (מתעדכן כל 3 שניות)
+              Response times of the three services (updated every 3 seconds)
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -401,7 +401,7 @@ function App() {
                 <div className={`text-2xl font-bold ${getTotalLatency() < 2000 ? 'text-green-600' : 'text-red-600'}`}>
                   {getTotalLatency().toFixed(0)}ms
                 </div>
-                <div className="text-sm text-gray-600">סה"כ</div>
+                <div className="text-sm text-gray-600">Total</div>
               </div>
             </div>
           </CardContent>

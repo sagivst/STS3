@@ -5,6 +5,7 @@ import asyncio
 import time
 from typing import Dict, List
 import os
+import base64
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -146,7 +147,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 }))
             
             elif message["type"] == "audio_data":
-                audio_data = message["audio"].encode('latin-1')  # Convert base64 to bytes
+                audio_data = base64.b64decode(message["audio"])  # Convert base64 to bytes
                 speaking_lang = user_languages[websocket]["speaking"]
                 listening_lang = user_languages[websocket]["listening"]
                 
