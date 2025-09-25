@@ -198,6 +198,38 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     "type": "latency_update",
                     "metrics": translation_service.latency_metrics
                 }))
+            
+            elif message["type"] == "request_room_status":
+                room_users = rooms.get(room_id, [])
+                user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
+                await websocket.send_text(json.dumps({
+                    "type": "room_status",
+                    "connected_users": len(room_users),
+                    "user_languages": user_langs
+                }))
+            
+            elif message["type"] == "request_test_audio":
+                user_lang = user_languages[websocket]["language"]
+                test_text = "Audio test successful. Translation pipeline is working."
+                
+                voice_map = {
+                    "en": "en-US-JennyNeural",
+                    "ja": "ja-JP-NanamiNeural",
+                    "es": "es-ES-ElviraNeural",
+                    "fr": "fr-FR-DeniseNeural",
+                    "de": "de-DE-KatjaNeural",
+                    "zh": "zh-CN-XiaoxiaoNeural"
+                }
+                
+                audio_output, _ = await translation_service.measure_azure_tts_latency(
+                    test_text, user_lang, voice_map.get(user_lang, "en-US-JennyNeural")
+                )
+                
+                await websocket.send_text(json.dumps({
+                    "type": "test_audio",
+                    "audio": audio_output.hex() if audio_output else "",
+                    "text": test_text
+                }))
     
     except WebSocketDisconnect:
         if room_id in rooms:

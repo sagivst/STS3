@@ -21,6 +21,8 @@ function App() {
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
+  const [connectedUsers, setConnectedUsers] = useState(0)
+  const [userLanguages, setUserLanguages] = useState<string[]>([])
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics>({
     deepgram: 0,
     deepl: 0,
@@ -32,6 +34,7 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const cleanupRef = useRef<(() => void) | null>(null)
 
   const languages = [
     { code: 'en', name: 'English' },
@@ -63,10 +66,13 @@ function App() {
           setTranscript(message.text)
         } else if (message.type === 'translated_audio') {
           playTranslatedAudio(message.audio)
-          setOutputLevel(80)
-          setTimeout(() => setOutputLevel(0), 1000)
         } else if (message.type === 'latency_update') {
           setLatencyMetrics(message.metrics)
+        } else if (message.type === 'room_status') {
+          setConnectedUsers(message.connected_users)
+          setUserLanguages(message.user_languages)
+        } else if (message.type === 'test_audio') {
+          playTranslatedAudio(message.audio)
         }
       }
 
@@ -77,6 +83,13 @@ function App() {
 
       wsRef.current = ws
       startAudioCapture()
+      
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'request_room_status' }))
+          ws.send(JSON.stringify({ type: 'request_test_audio' }))
+        }
+      }, 1000)
     } catch (error) {
       console.error('Failed to connect:', error)
     }
@@ -130,7 +143,8 @@ function App() {
       mediaRecorder.start(1000)
       setIsRecording(true)
       
-      monitorAudioLevel()
+      const cleanup = monitorAudioLevel()
+      cleanupRef.current = cleanup
     } catch (error) {
       console.error('Failed to start audio capture:', error)
     }
@@ -147,6 +161,11 @@ function App() {
       streamRef.current = null
     }
     
+    if (cleanupRef.current) {
+      cleanupRef.current()
+      cleanupRef.current = null
+    }
+    
     if (audioContextRef.current) {
       audioContextRef.current.close()
       audioContextRef.current = null
@@ -156,10 +175,11 @@ function App() {
     setAudioLevel(0)
   }
 
-  const monitorAudioLevel = () => {
-    if (!analyserRef.current) return
+  const monitorAudioLevel = (): (() => void) | null => {
+    if (!analyserRef.current) return null
     
     const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+    let animationId: number
     
     const updateLevel = () => {
       if (!analyserRef.current) return
@@ -168,12 +188,16 @@ function App() {
       const average = dataArray.reduce((a, b) => a + b) / dataArray.length
       setAudioLevel(Math.min(100, (average / 128) * 100))
       
-      if (isRecording) {
-        requestAnimationFrame(updateLevel)
-      }
+      animationId = requestAnimationFrame(updateLevel)
     }
     
     updateLevel()
+    
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId)
+      }
+    }
   }
 
   const playTranslatedAudio = (hexAudio: string) => {
@@ -279,6 +303,26 @@ function App() {
                 </Select>
               </div>
             </div>
+
+            {isConnected && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-green-600" />
+                    <span className="font-medium text-green-800">
+                      Connected Users: {connectedUsers}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    {userLanguages.map((lang, index) => (
+                      <Badge key={index} variant="secondary" className="text-xs">
+                        {languages.find(l => l.code === lang)?.name || lang}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-center">
               <Button
