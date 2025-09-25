@@ -61,10 +61,13 @@ function App() {
 
       ws.onmessage = (event) => {
         const message = JSON.parse(event.data)
+        console.log('[DEBUG] Received WebSocket message:', message.type, message)
         
         if (message.type === 'transcript') {
+          console.log('[DEBUG] Setting transcript:', message.text)
           setTranscript(message.text)
         } else if (message.type === 'translated_audio') {
+          console.log('[DEBUG] Received translated audio, hex length:', message.audio?.length || 0)
           playTranslatedAudio(message.audio)
         } else if (message.type === 'latency_update') {
           setLatencyMetrics(message.metrics)
@@ -72,6 +75,7 @@ function App() {
           setConnectedUsers(message.connected_users)
           setUserLanguages(message.user_languages)
         } else if (message.type === 'test_audio') {
+          console.log('[DEBUG] Received test audio, hex length:', message.audio?.length || 0)
           playTranslatedAudio(message.audio)
         }
       }
@@ -108,7 +112,32 @@ function App() {
 
   const startAudioCapture = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      console.log('[DEBUG] Requesting microphone access...')
+      
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('[DEBUG] getUserMedia not supported')
+        return
+      }
+      
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const audioInputs = devices.filter(device => device.kind === 'audioinput')
+        console.log('[DEBUG] Available audio input devices:', audioInputs.length)
+        audioInputs.forEach((device, index) => {
+          console.log(`[DEBUG] Device ${index}: ${device.label || 'Unknown'} (${device.deviceId})`)
+        })
+      } catch (deviceError) {
+        console.error('[DEBUG] Failed to enumerate devices:', deviceError)
+      }
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
+      console.log('[DEBUG] Microphone access granted, stream:', stream)
       streamRef.current = stream
       
       const audioContext = new AudioContext()
@@ -121,15 +150,20 @@ function App() {
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      const mediaRecorder = new MediaRecorder(stream)
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      })
+      console.log('[DEBUG] MediaRecorder created, mimeType:', mediaRecorder.mimeType)
       mediaRecorderRef.current = mediaRecorder
       
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          console.log('[DEBUG] Audio data available, size:', event.data.size)
           const reader = new FileReader()
           reader.onload = () => {
             const arrayBuffer = reader.result as ArrayBuffer
             const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+            console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
             
             wsRef.current?.send(JSON.stringify({
               type: 'audio_data',
@@ -142,11 +176,16 @@ function App() {
       
       mediaRecorder.start(1000)
       setIsRecording(true)
+      console.log('[DEBUG] MediaRecorder started')
       
       const cleanup = monitorAudioLevel()
       cleanupRef.current = cleanup
     } catch (error) {
-      console.error('Failed to start audio capture:', error)
+      console.error('[DEBUG] Failed to start audio capture:', error)
+      if (error instanceof Error) {
+        console.error('[DEBUG] Error name:', error.name)
+        console.error('[DEBUG] Error message:', error.message)
+      }
     }
   }
 
@@ -201,32 +240,52 @@ function App() {
   }
 
   const playTranslatedAudio = (hexAudio: string) => {
-    if (!hexAudio) return
+    console.log('[DEBUG] playTranslatedAudio called with hex length:', hexAudio?.length || 0)
+    if (!hexAudio || hexAudio.length === 0) {
+      console.log('[DEBUG] No audio data to play')
+      return
+    }
     
     try {
       const bytes = new Uint8Array(hexAudio.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || [])
+      console.log('[DEBUG] Converted hex to bytes, length:', bytes.length)
+      
       const blob = new Blob([bytes], { type: 'audio/wav' })
       const audio = new Audio(URL.createObjectURL(blob))
+      console.log('[DEBUG] Created audio element with blob URL')
+      
+      audio.addEventListener('loadstart', () => {
+        console.log('[DEBUG] Audio loading started')
+      })
+      
+      audio.addEventListener('canplay', () => {
+        console.log('[DEBUG] Audio can play')
+      })
       
       audio.addEventListener('play', () => {
+        console.log('[DEBUG] Audio started playing')
         setOutputLevel(80)
       })
       
       audio.addEventListener('ended', () => {
+        console.log('[DEBUG] Audio playback ended')
         setOutputLevel(0)
       })
       
       audio.addEventListener('error', (e) => {
-        console.error('Audio playback error:', e)
+        console.error('[DEBUG] Audio playback error:', e)
+        console.error('[DEBUG] Audio error details:', audio.error)
         setOutputLevel(0)
       })
       
-      audio.play().catch(error => {
-        console.error('Failed to play audio:', error)
+      audio.play().then(() => {
+        console.log('[DEBUG] Audio play() promise resolved')
+      }).catch(error => {
+        console.error('[DEBUG] Failed to play audio:', error)
         setOutputLevel(0)
       })
     } catch (error) {
-      console.error('Failed to process audio:', error)
+      console.error('[DEBUG] Failed to process audio:', error)
     }
   }
 
