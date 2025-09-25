@@ -45,7 +45,9 @@ function App() {
 
   const connectToRoom = async () => {
     try {
-      const ws = new WebSocket(`ws://localhost:8000/ws/${roomId}`)
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
+      const ws = new WebSocket(`${wsUrl}/ws/${roomId}`)
       
       ws.onopen = () => {
         setIsConnected(true)
