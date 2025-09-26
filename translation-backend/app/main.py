@@ -65,9 +65,9 @@ class TranslationService:
                 smart_format=True,
             )
             
-            print(f"[DEBUG] Deepgram STT - Sending request with mimetype: audio/webm")
+            print(f"[DEBUG] Deepgram STT - Sending request without explicit mimetype")
             response = deepgram_client.listen.prerecorded.v("1").transcribe_file(
-                {"buffer": audio_data, "mimetype": "audio/webm"}, options
+                {"buffer": audio_data}, options
             )
             
             end_time = time.time()

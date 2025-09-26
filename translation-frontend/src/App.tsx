@@ -196,17 +196,17 @@ function App() {
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
+      const mediaRecorder = new MediaRecorder(stream)
       console.log('[DEBUG] MediaRecorder created, mimeType:', mediaRecorder.mimeType)
       mediaRecorderRef.current = mediaRecorder
       
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
           console.log('[DEBUG] Audio data available, size:', event.data.size)
+          
+          const audioBlob = new Blob([event.data], { type: 'audio/wav' })
           const reader = new FileReader()
-          reader.onload = () => {
+          reader.onload = async () => {
             const arrayBuffer = reader.result as ArrayBuffer
             const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
             console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
@@ -216,7 +216,7 @@ function App() {
               audio: base64
             }))
           }
-          reader.readAsArrayBuffer(event.data)
+          reader.readAsArrayBuffer(audioBlob)
         }
       }
       
