@@ -28,6 +28,12 @@ function App() {
     deepl: 0,
     azure_tts: 0
   })
+  
+  const [chainedTestResults, setChainedTestResults] = useState({
+    transcribedText: '',
+    translatedText: '',
+    isChainedTest: false
+  })
 
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -83,12 +89,43 @@ function App() {
           const messageText = message.message
           const latency = message.latency
           const totalTime = message.total_time || latency
+          const isChainedTest = message.chained_test
           
           setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
           
-          if (service === 'azure_tts' && message.audio) {
-            console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
-            playTranslatedAudio(message.audio)
+          if (service === 'deepgram_stt' && isChainedTest) {
+            const transcription = message.result || ''
+            setChainedTestResults(prev => ({ ...prev, transcribedText: transcription }))
+            setTimeout(() => {
+              if (transcription.trim()) {
+                testDeepLTranslation()
+              } else {
+                setTranscript("STT test failed - no transcription to continue chain")
+                setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+              }
+            }, 1000)
+          } else if (service === 'deepl_translation' && isChainedTest) {
+            const translatedText = message.result || ''
+            setChainedTestResults(prev => ({ ...prev, translatedText: translatedText }))
+            setTimeout(() => {
+              if (translatedText.trim()) {
+                testAzureTTS()
+              } else {
+                setTranscript("Translation test failed - no translation to continue chain")
+                setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+              }
+            }, 1000)
+          } else if (service === 'azure_tts') {
+            if (message.audio) {
+              console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
+              playTranslatedAudio(message.audio)
+            }
+            if (isChainedTest) {
+              setTimeout(() => {
+                setTranscript("Chained test complete: STT → Translation → TTS")
+                setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+              }, 2000)
+            }
           }
         }
       }
@@ -316,6 +353,7 @@ function App() {
     if (!wsRef.current || !isConnected) return
     
     const startTime = Date.now()
+    setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: true })
     setTranscript("Starting Deepgram STT test...")
     
     try {
@@ -335,7 +373,8 @@ function App() {
         wsRef.current?.send(JSON.stringify({
           type: "test_deepgram_stt",
           audio: base64Audio,
-          test_start_time: startTime
+          test_start_time: startTime,
+          chained_test: true
         }))
         
         stream.getTracks().forEach(track => track.stop())
@@ -349,6 +388,7 @@ function App() {
       console.error('Error testing Deepgram STT:', error)
       const totalTime = Date.now() - startTime
       setTranscript(`Error: Could not access microphone (${totalTime}ms)`)
+      setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
     }
   }
 
@@ -356,17 +396,29 @@ function App() {
     if (!wsRef.current || !isConnected) return
     
     const startTime = Date.now()
-    const testText = "Hello, this is a test message for translation."
-    const targetLang = userLanguage === "en" ? "ja" : "en"
+    let testText: string
+    let sourceLanguage: string
     
-    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} → ${targetLang})`)
+    if (chainedTestResults.transcribedText) {
+      testText = chainedTestResults.transcribedText
+      sourceLanguage = "en"
+      setTranscript(`Testing DeepL translation with Deepgram result: "${testText}" (${sourceLanguage} → ja)`)
+    } else {
+      testText = "Hello, this is a test message for translation."
+      sourceLanguage = "en"
+      setChainedTestResults({ transcribedText: testText, translatedText: '', isChainedTest: true })
+      setTranscript(`Testing DeepL translation with fallback text: "${testText}" (${sourceLanguage} → ja)`)
+    }
+    
+    const targetLang = "ja"
     
     wsRef.current.send(JSON.stringify({
       type: "test_deepl_translation",
       text: testText,
-      source_language: userLanguage,
+      source_language: sourceLanguage,
       target_language: targetLang,
-      test_start_time: startTime
+      test_start_time: startTime,
+      chained_test: true
     }))
   }
 
@@ -374,15 +426,26 @@ function App() {
     if (!wsRef.current || !isConnected) return
     
     const startTime = Date.now()
-    const testText = "This is a test of Azure Text-to-Speech service."
+    let testText: string
+    let language: string
     
-    setTranscript(`Testing Azure TTS: "${testText}" (${userLanguage})`)
+    if (chainedTestResults.translatedText) {
+      testText = chainedTestResults.translatedText
+      language = "ja"
+      setTranscript(`Testing Azure TTS with DeepL result: "${testText}" (${language})`)
+    } else {
+      testText = "これはAzure Text-to-Speechサービスのテストです。"
+      language = "ja"
+      setChainedTestResults(prev => ({ ...prev, translatedText: testText, isChainedTest: true }))
+      setTranscript(`Testing Azure TTS with fallback Japanese text: "${testText}" (${language})`)
+    }
     
     wsRef.current.send(JSON.stringify({
       type: "test_azure_tts",
       text: testText,
-      language: userLanguage,
-      test_start_time: startTime
+      language: language,
+      test_start_time: startTime,
+      chained_test: true
     }))
   }
 

@@ -404,9 +404,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             elif message["type"] == "test_deepgram_stt":
                 print(f"[DEBUG] Individual Deepgram STT test requested")
                 test_start_time = message.get("test_start_time", time.time() * 1000)
+                chained_test = message.get("chained_test", False)
                 audio_data = base64.b64decode(message["audio"])
                 user_lang = user_languages[websocket]["language"]
-                print(f"[DEBUG] STT Test - User language: {user_lang}, audio data size: {len(audio_data)} bytes")
+                print(f"[DEBUG] STT Test - User language: {user_lang}, audio data size: {len(audio_data)} bytes, chained: {chained_test}")
                 
                 transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
                     audio_data, user_lang
@@ -422,16 +423,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     "result": transcript,
                     "latency": deepgram_latency,
                     "total_time": total_time,
+                    "chained_test": chained_test,
                     "message": f"STT Result: '{transcript}'" if transcript else "STT failed - no transcript"
                 }))
             
             elif message["type"] == "test_deepl_translation":
                 print(f"[DEBUG] Individual DeepL translation test requested")
                 test_start_time = message.get("test_start_time", time.time() * 1000)
+                chained_test = message.get("chained_test", False)
                 text = message["text"]
                 source_lang = message["source_language"]
                 target_lang = message["target_language"]
-                print(f"[DEBUG] Translation Test - Text: '{text}', {source_lang} -> {target_lang}")
+                print(f"[DEBUG] Translation Test - Text: '{text}', {source_lang} -> {target_lang}, chained: {chained_test}")
                 
                 translated_text, deepl_latency = await translation_service.measure_deepl_latency(
                     text, source_lang, target_lang
@@ -447,15 +450,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     "result": translated_text,
                     "latency": deepl_latency,
                     "total_time": total_time,
+                    "chained_test": chained_test,
                     "message": f"Translation: '{text}' -> '{translated_text}'"
                 }))
             
             elif message["type"] == "test_azure_tts":
                 print(f"[DEBUG] Individual Azure TTS test requested")
                 test_start_time = message.get("test_start_time", time.time() * 1000)
+                chained_test = message.get("chained_test", False)
                 text = message["text"]
                 user_lang = message["language"]
-                print(f"[DEBUG] TTS Test - Text: '{text}', language: {user_lang}")
+                print(f"[DEBUG] TTS Test - Text: '{text}', language: {user_lang}, chained: {chained_test}")
                 
                 voice_map = {
                     "en": "en-US-JennyNeural",
@@ -481,6 +486,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     "result": hex_audio,
                     "latency": azure_latency,
                     "total_time": total_time,
+                    "chained_test": chained_test,
                     "message": f"TTS generated {len(audio_output)} bytes" if audio_output else "TTS failed - no audio generated",
                     "audio": hex_audio
                 }))
