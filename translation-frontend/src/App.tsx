@@ -208,7 +208,6 @@ function App() {
         if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
           console.log('[DEBUG] Audio data available, size:', event.data.size)
           
-          const audioBlob = new Blob([event.data], { type: 'audio/wav' })
           const reader = new FileReader()
           reader.onload = async () => {
             const arrayBuffer = reader.result as ArrayBuffer
@@ -220,7 +219,7 @@ function App() {
               audio: base64
             }))
           }
-          reader.readAsArrayBuffer(audioBlob)
+          reader.readAsArrayBuffer(event.data)
         }
       }
       
