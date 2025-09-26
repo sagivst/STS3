@@ -204,31 +204,56 @@ function App() {
       console.log('[DEBUG] MediaRecorder created, mimeType:', mediaRecorder.mimeType)
       mediaRecorderRef.current = mediaRecorder
       
+      const audioChunks: Blob[] = []
+      
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+        if (event.data.size > 0) {
           console.log('[DEBUG] Audio data available, size:', event.data.size)
-          
-          const reader = new FileReader()
-          reader.onload = async () => {
-            const arrayBuffer = reader.result as ArrayBuffer
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-            console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
-            
-            wsRef.current?.send(JSON.stringify({
-              type: 'audio_data',
-              audio: base64
-            }))
-          }
-          reader.readAsArrayBuffer(event.data)
+          audioChunks.push(event.data)
         }
       }
       
-      mediaRecorder.start(1000)
+      mediaRecorder.onstop = async () => {
+        if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
+          const arrayBuffer = await audioBlob.arrayBuffer()
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+          console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
+          
+          wsRef.current?.send(JSON.stringify({
+            type: 'audio_data',
+            audio: base64
+          }))
+        }
+        audioChunks.length = 0
+      }
+      
+      mediaRecorder.start()
       setIsRecording(true)
       console.log('[DEBUG] MediaRecorder started')
       
+      const recordingInterval = setInterval(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop()
+          setTimeout(() => {
+            if (mediaRecorderRef.current && streamRef.current) {
+              mediaRecorderRef.current.start()
+            }
+          }, 100)
+        }
+      }, 1000)
+      
       const cleanup = monitorAudioLevel()
-      cleanupRef.current = cleanup
+      
+      if (!cleanupRef.current) {
+        cleanupRef.current = () => {}
+      }
+      const originalCleanup = cleanupRef.current
+      cleanupRef.current = () => {
+        clearInterval(recordingInterval)
+        if (cleanup) cleanup()
+        originalCleanup()
+      }
     } catch (error) {
       console.error('[DEBUG] Failed to start audio capture:', error)
       if (error instanceof Error) {
@@ -239,8 +264,12 @@ function App() {
   }
 
   const stopAudioCapture = () => {
+    setIsRecording(false)
+    
     if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop()
+      if (mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop()
+      }
       mediaRecorderRef.current = null
     }
     
@@ -259,7 +288,6 @@ function App() {
       audioContextRef.current = null
     }
     
-    setIsRecording(false)
     setAudioLevel(0)
   }
 
@@ -375,7 +403,7 @@ function App() {
       }
       
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
+        const audioBlob = new Blob(audioChunks)
         const arrayBuffer = await audioBlob.arrayBuffer()
         const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
         
