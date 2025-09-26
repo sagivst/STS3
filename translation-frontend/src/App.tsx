@@ -181,7 +181,11 @@ function App() {
       }
       
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       })
       console.log('[DEBUG] Microphone access granted, stream:', stream)
       streamRef.current = stream
@@ -357,7 +361,13 @@ function App() {
     setTranscript("Starting Deepgram STT test...")
     
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
       const mediaRecorder = new MediaRecorder(stream)
       const audioChunks: Blob[] = []
       
