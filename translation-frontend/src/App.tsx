@@ -136,6 +136,7 @@ function App() {
       }
 
       wsRef.current = ws
+      ;(window as any).ws = ws
       startAudioCapture()
       
       setTimeout(() => {
