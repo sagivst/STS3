@@ -235,6 +235,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
         rooms[room_id] = []
     rooms[room_id].append(websocket)
     
+    print(f"[DEBUG] WebSocket connected to room {room_id}, total connections: {len(rooms[room_id])}")
+    print(f"[DEBUG] WebSocket ID: {id(websocket)}")
+    
     user_languages[websocket] = {
         "language": "en"
     }
@@ -299,6 +302,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         room_clients = rooms.get(room_id, [])
                         print(f"[DEBUG] Room has {len(room_clients)} clients, processing for {len(room_clients)-1} other clients")
                         
+                        translation_processed = False
+                        
                         for other_ws in room_clients:
                             if other_ws != websocket and other_ws in user_languages:
                                 other_lang = user_languages[other_ws]["language"]
@@ -336,12 +341,54 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                                 "translated_text": translated_text
                                             }))
                                             print(f"[DEBUG] Sent translated audio to other user")
+                                            translation_processed = True
                                         else:
                                             print(f"[DEBUG] No audio output from Azure TTS")
                                     else:
                                         print(f"[DEBUG] No translation from DeepL")
                                 else:
                                     print(f"[DEBUG] Same language, no translation needed")
+                        
+                        if not translation_processed and len(room_clients) >= 1:
+                            print(f"[DEBUG] No translation processed for other users, providing fallback translation to current user")
+                            test_target_lang = "ja" if user_lang == "en" else "en"
+                            print(f"[DEBUG] Fallback translation: {user_lang} -> {test_target_lang}")
+                            
+                            translated_text, deepl_latency = await translation_service.measure_deepl_latency(
+                                transcript, user_lang, test_target_lang
+                            )
+                            print(f"[DEBUG] Fallback DeepL translation: '{translated_text}', latency: {deepl_latency}ms")
+                            
+                            if translated_text and translated_text.strip():
+                                voice_map = {
+                                    "en": "en-US-JennyNeural",
+                                    "ja": "ja-JP-NanamiNeural",
+                                    "es": "es-ES-ElviraNeural",
+                                    "fr": "fr-FR-DeniseNeural",
+                                    "de": "de-DE-KatjaNeural",
+                                    "zh": "zh-CN-XiaoxiaoNeural"
+                                }
+                                
+                                audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
+                                    translated_text, test_target_lang, voice_map.get(test_target_lang, "en-US-JennyNeural")
+                                )
+                                print(f"[DEBUG] Fallback Azure TTS audio size: {len(audio_output)} bytes, latency: {azure_latency}ms")
+                                
+                                if audio_output:
+                                    hex_audio = audio_output.hex()
+                                    print(f"[DEBUG] Sending fallback translated audio to current user, hex length: {len(hex_audio)}")
+                                    
+                                    await websocket.send_text(json.dumps({
+                                        "type": "translated_audio",
+                                        "audio": hex_audio,
+                                        "original_text": transcript,
+                                        "translated_text": translated_text
+                                    }))
+                                    print(f"[DEBUG] Sent fallback translated audio to current user")
+                                else:
+                                    print(f"[DEBUG] No fallback audio output from Azure TTS")
+                            else:
+                                print(f"[DEBUG] No fallback translation from DeepL")
                     else:
                         print(f"[DEBUG] No transcript from Deepgram")
                 except Exception as e:
