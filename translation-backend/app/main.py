@@ -283,26 +283,34 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             elif message["type"] == "audio_data":
                 print(f"[DEBUG] Received audio_data message")
                 try:
+                    if "audio" not in message:
+                        print(f"[DEBUG] ERROR: No audio field in message")
+                        continue
+                    
                     audio_data = base64.b64decode(message["audio"])
                     user_lang = user_languages[websocket]["language"]
                     print(f"[DEBUG] Audio data size: {len(audio_data)} bytes, user language: {user_lang}")
                     
+                    if len(audio_data) == 0:
+                        print(f"[DEBUG] ERROR: Empty audio data")
+                        continue
+                    
+                    print(f"[DEBUG] Calling Deepgram STT service...")
                     transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
                         audio_data, user_lang
                     )
                     print(f"[DEBUG] Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
                     
                     if transcript and transcript.strip():
+                        print(f"[DEBUG] Valid transcript received, sending to client: '{transcript}'")
                         await websocket.send_text(json.dumps({
                             "type": "transcript",
                             "text": transcript
                         }))
-                        print(f"[DEBUG] Sent transcript to client: '{transcript}'")
+                        print(f"[DEBUG] Successfully sent transcript to client: '{transcript}'")
                         
                         room_clients = rooms.get(room_id, [])
-                        print(f"[DEBUG] Room has {len(room_clients)} clients, processing for {len(room_clients)-1} other clients")
-                        
-                        translation_processed = False
+                        print(f"[DEBUG] Room has {len(room_clients)} clients")
                         
                         for other_ws in room_clients:
                             if other_ws != websocket and other_ws in user_languages:
@@ -341,60 +349,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                                 "translated_text": translated_text
                                             }))
                                             print(f"[DEBUG] Sent translated audio to other user")
-                                            translation_processed = True
-                                        else:
-                                            print(f"[DEBUG] No audio output from Azure TTS")
-                                    else:
-                                        print(f"[DEBUG] No translation from DeepL")
-                                else:
-                                    print(f"[DEBUG] Same language, no translation needed")
-                        
-                        if not translation_processed and len(room_clients) >= 1:
-                            print(f"[DEBUG] No translation processed for other users, providing fallback translation to current user")
-                            test_target_lang = "ja" if user_lang == "en" else "en"
-                            print(f"[DEBUG] Fallback translation: {user_lang} -> {test_target_lang}")
-                            
-                            translated_text, deepl_latency = await translation_service.measure_deepl_latency(
-                                transcript, user_lang, test_target_lang
-                            )
-                            print(f"[DEBUG] Fallback DeepL translation: '{translated_text}', latency: {deepl_latency}ms")
-                            
-                            if translated_text and translated_text.strip():
-                                voice_map = {
-                                    "en": "en-US-JennyNeural",
-                                    "ja": "ja-JP-NanamiNeural",
-                                    "es": "es-ES-ElviraNeural",
-                                    "fr": "fr-FR-DeniseNeural",
-                                    "de": "de-DE-KatjaNeural",
-                                    "zh": "zh-CN-XiaoxiaoNeural"
-                                }
-                                
-                                audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
-                                    translated_text, test_target_lang, voice_map.get(test_target_lang, "en-US-JennyNeural")
-                                )
-                                print(f"[DEBUG] Fallback Azure TTS audio size: {len(audio_output)} bytes, latency: {azure_latency}ms")
-                                
-                                if audio_output:
-                                    hex_audio = audio_output.hex()
-                                    print(f"[DEBUG] Sending fallback translated audio to current user, hex length: {len(hex_audio)}")
-                                    
-                                    await websocket.send_text(json.dumps({
-                                        "type": "translated_audio",
-                                        "audio": hex_audio,
-                                        "original_text": transcript,
-                                        "translated_text": translated_text
-                                    }))
-                                    print(f"[DEBUG] Sent fallback translated audio to current user")
-                                else:
-                                    print(f"[DEBUG] No fallback audio output from Azure TTS")
-                            else:
-                                print(f"[DEBUG] No fallback translation from DeepL")
                     else:
                         print(f"[DEBUG] No transcript from Deepgram")
                 except Exception as e:
-                    print(f"[DEBUG] Error processing audio_data: {e}")
+                    print(f"[DEBUG] ERROR in audio_data processing: {e}")
+                    print(f"[DEBUG] Exception type: {type(e).__name__}")
                     import traceback
-                    traceback.print_exc()
+                    print(f"[DEBUG] Full traceback: {traceback.format_exc()}")
             
             elif message["type"] == "request_latency":
                 await websocket.send_text(json.dumps({
