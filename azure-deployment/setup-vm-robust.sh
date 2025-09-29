@@ -87,8 +87,21 @@ cd /home/azureuser
 git clone https://github.com/sagivst/STS3.git
 cd STS3
 
+echo "Checking repository structure..."
+ls -la
+echo "Looking for backend directory..."
+find . -name "*backend*" -o -name "*translation*" -type d
+
 echo "Setting up backend..."
-cd translation-backend
+if [ -d "translation-backend" ]; then
+    cd translation-backend
+elif [ -d "backend" ]; then
+    cd backend
+else
+    echo "ERROR: Could not find backend directory"
+    ls -la
+    exit 1
+fi
 python3 -m venv venv
 source venv/bin/activate
 
@@ -145,7 +158,16 @@ WantedBy=multi-user.target
 EOF
 
 echo "Setting up frontend..."
-cd ../translation-frontend
+cd ..
+if [ -d "translation-frontend" ]; then
+    cd translation-frontend
+elif [ -d "frontend" ]; then
+    cd frontend
+else
+    echo "ERROR: Could not find frontend directory"
+    ls -la
+    exit 1
+fi
 npm install
 npm run build
 
