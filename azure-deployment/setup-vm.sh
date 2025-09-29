@@ -9,8 +9,8 @@ sudo apt-get update -y
 sudo apt-get upgrade -y
 
 sudo apt-get install -y \
-    python3.12 \
-    python3.12-venv \
+    python3.10 \
+    python3.10-venv \
     python3-pip \
     nodejs \
     npm \
@@ -38,7 +38,7 @@ git clone https://github.com/sagivst/STS3.git
 cd STS3
 
 cd translation-backend
-python3.12 -m venv venv
+python3.10 -m venv venv
 source venv/bin/activate
 pip install poetry
 

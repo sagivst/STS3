@@ -246,7 +246,7 @@ resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' =
     autoUpgradeMinorVersion: true
     settings: {
       fileUris: [
-        'https://raw.githubusercontent.com/sagivst/STS3/main/azure-deployment/setup-vm.sh'
+        'https://raw.githubusercontent.com/sagivst/STS3/devin/1758881542-individual-component-tests/azure-deployment/setup-vm.sh'
       ]
     }
     protectedSettings: {
