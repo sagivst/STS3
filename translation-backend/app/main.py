@@ -101,7 +101,16 @@ class TranslationService:
     async def measure_deepl_latency(self, text: str, source_lang: str, target_lang: str) -> tuple:
         start_time = time.time()
         try:
-            deepl_lang_map = {
+            deepl_source_map = {
+                "en": "EN",
+                "ja": "JA", 
+                "es": "ES",
+                "fr": "FR",
+                "de": "DE",
+                "zh": "ZH"
+            }
+            
+            deepl_target_map = {
                 "en": "EN-US",
                 "ja": "JA", 
                 "es": "ES",
@@ -110,8 +119,8 @@ class TranslationService:
                 "zh": "ZH"
             }
             
-            deepl_source = deepl_lang_map.get(source_lang, source_lang.upper())
-            deepl_target = deepl_lang_map.get(target_lang, target_lang.upper())
+            deepl_source = deepl_source_map.get(source_lang, source_lang.upper())
+            deepl_target = deepl_target_map.get(target_lang, target_lang.upper())
             
             print(f"[DEBUG] DeepL translation: '{text}' from {source_lang} ({deepl_source}) to {target_lang} ({deepl_target})")
             result = deepl_translator.translate_text(
