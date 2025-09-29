@@ -52,126 +52,147 @@ function App() {
   ]
 
   const connectToRoom = async () => {
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
-      const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
-      console.log('[DEBUG] Attempting to connect to WebSocket URL:', `${wsUrl}/ws/${roomId}`)
-      const ws = new WebSocket(`${wsUrl}/ws/${roomId}`)
-      wsRef.current = ws
-      
-      ws.onopen = () => {
-        console.log('[DEBUG] WebSocket connection established')
-        setIsConnected(true)
-        ws.send(JSON.stringify({
-          type: 'language_config',
-          language: userLanguage
-        }))
-      }
-
-      ws.onmessage = (event) => {
-        console.log('[DEBUG] WebSocket message received:', event.data)
-        const message = JSON.parse(event.data)
-        console.log('[DEBUG] Parsed message type:', message.type)
+    if (isConnected) return
+    
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+    const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
+    console.log('[DEBUG] Attempting to connect to WebSocket URL:', `${wsUrl}/ws/${roomId}`)
+    
+    let retryCount = 0
+    const maxRetries = 3
+    const retryDelay = 2000
+    
+    const attemptConnection = () => {
+      try {
+        const ws = new WebSocket(`${wsUrl}/ws/${roomId}`)
+        wsRef.current = ws
         
-        if (message.type === 'transcript') {
-          console.log('[DEBUG] Received transcript:', message.text)
-          setTranscript(message.text)
-        } else if (message.type === 'translated_audio') {
-          console.log('[DEBUG] Received translated audio data')
-          playTranslatedAudio(message.audio)
-        } else if (message.type === 'latency_update') {
-          console.log('[DEBUG] Received latency metrics:', message.metrics)
-          setLatencyMetrics(message.metrics)
-        } else if (message.type === 'room_status') {
-          console.log('[DEBUG] Received room status:', message)
-          setConnectedUsers(message.connected_users)
-          setUserLanguages(message.user_languages)
-        } else if (message.type === 'test_audio') {
-          console.log('[DEBUG] Received test audio data')
-          playTranslatedAudio(message.audio)
-        } else if (message.type === 'test_result') {
-          console.log('[DEBUG] Received test result:', message)
-          const service = message.service
-          const messageText = message.message
-          const latency = message.latency
-          const totalTime = message.total_time || latency
-          const isChainedTest = message.chained_test
+        ws.onopen = () => {
+          console.log('[DEBUG] WebSocket connection established')
+          setIsConnected(true)
+          retryCount = 0
+          ws.send(JSON.stringify({
+            type: 'language_config',
+            language: userLanguage
+          }))
           
-          setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
+          startAudioCapture()
           
-          if (service === 'deepgram_stt' && isChainedTest) {
-            const transcription = message.result || ''
-            setChainedTestResults(prev => ({ ...prev, transcribedText: transcription }))
-            setTimeout(() => {
-              if (transcription.trim()) {
-                testDeepLTranslation()
-              } else {
-                setTranscript("STT test failed - no transcription to continue chain")
-                setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
-              }
-            }, 1000)
-          } else if (service === 'deepl_translation' && isChainedTest) {
-            const translatedText = message.result || ''
-            setChainedTestResults(prev => ({ ...prev, translatedText: translatedText }))
-            setTimeout(() => {
-              if (translatedText.trim()) {
-                testAzureTTS()
-              } else {
-                setTranscript("Translation test failed - no translation to continue chain")
-                setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
-              }
-            }, 1000)
-          } else if (service === 'azure_tts') {
-            if (message.audio) {
-              console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
-              playTranslatedAudio(message.audio)
-            }
-            if (isChainedTest) {
-              setTimeout(() => {
-                setTranscript("Chained test complete: STT → Translation → TTS")
-                setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
-              }, 2000)
-            }
-          }
-        } else if (message.type === 'error') {
-          console.error('[DEBUG] Received error from backend:', message.message)
-          setTranscript(`Backend Error: ${message.message}`)
-        }
-      }
-
-      ws.onclose = (event) => {
-        console.log('[DEBUG] WebSocket connection closed, code:', event.code, 'reason:', event.reason)
-        setIsConnected(false)
-        setIsRecording(false)
-        
-        if (event.code !== 1000 && event.code !== 1001) {
-          console.log('[DEBUG] Attempting to reconnect in 3 seconds...')
           setTimeout(() => {
-            if (!isConnected) {
-              connectToRoom()
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'request_room_status' }))
+              ws.send(JSON.stringify({ type: 'request_test_audio' }))
             }
-          }, 3000)
+          }, 1000)
+        }
+
+        ws.onmessage = (event) => {
+          console.log('[DEBUG] WebSocket message received:', event.data)
+          const message = JSON.parse(event.data)
+          console.log('[DEBUG] Parsed message type:', message.type)
+          
+          if (message.type === 'transcript') {
+            console.log('[DEBUG] Received transcript:', message.text)
+            setTranscript(message.text)
+          } else if (message.type === 'translated_audio') {
+            console.log('[DEBUG] Received translated audio data')
+            playTranslatedAudio(message.audio)
+          } else if (message.type === 'latency_update') {
+            console.log('[DEBUG] Received latency metrics:', message.metrics)
+            setLatencyMetrics(message.metrics)
+          } else if (message.type === 'room_status') {
+            console.log('[DEBUG] Received room status:', message)
+            setConnectedUsers(message.connected_users)
+            setUserLanguages(message.user_languages)
+          } else if (message.type === 'test_audio') {
+            console.log('[DEBUG] Received test audio data')
+            playTranslatedAudio(message.audio)
+          } else if (message.type === 'test_result') {
+            console.log('[DEBUG] Received test result:', message)
+            const service = message.service
+            const messageText = message.message
+            const latency = message.latency
+            const totalTime = message.total_time || latency
+            const isChainedTest = message.chained_test
+            
+            setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
+            
+            if (service === 'deepgram_stt' && isChainedTest) {
+              const transcription = message.result || ''
+              setChainedTestResults(prev => ({ ...prev, transcribedText: transcription }))
+              setTimeout(() => {
+                if (transcription.trim()) {
+                  testDeepLTranslation()
+                } else {
+                  setTranscript("STT test failed - no transcription to continue chain")
+                  setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+                }
+              }, 1000)
+            } else if (service === 'deepl_translation' && isChainedTest) {
+              const translatedText = message.result || ''
+              setChainedTestResults(prev => ({ ...prev, translatedText: translatedText }))
+              setTimeout(() => {
+                if (translatedText.trim()) {
+                  testAzureTTS()
+                } else {
+                  setTranscript("Translation test failed - no translation to continue chain")
+                  setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+                }
+              }, 1000)
+            } else if (service === 'azure_tts') {
+              if (message.audio) {
+                console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
+                playTranslatedAudio(message.audio)
+              }
+              if (isChainedTest) {
+                setTimeout(() => {
+                  setTranscript("Chained test complete: STT → Translation → TTS")
+                  setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+                }, 2000)
+              }
+            }
+          } else if (message.type === 'error') {
+            console.error('[DEBUG] Received error from backend:', message.message)
+            setTranscript(`Backend Error: ${message.message}`)
+          }
+        }
+
+        ws.onclose = (event) => {
+          console.log('[DEBUG] WebSocket connection closed, code:', event.code, 'reason:', event.reason)
+          setIsConnected(false)
+          setIsRecording(false)
+          
+          if (event.code !== 1000 && event.code !== 1001 && retryCount < maxRetries) {
+            retryCount++
+            console.log(`[DEBUG] Attempting to reconnect (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
+            setTimeout(attemptConnection, retryDelay)
+          }
+        }
+
+        ws.onerror = (error) => {
+          console.error('[DEBUG] WebSocket error:', error)
+          if (retryCount < maxRetries) {
+            retryCount++
+            console.log(`[DEBUG] Connection failed, retrying (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
+            setTimeout(attemptConnection, retryDelay)
+          }
+        }
+
+        wsRef.current = ws
+        ;(window as any).ws = ws
+        
+      } catch (error) {
+        console.error('[DEBUG] Failed to connect:', error)
+        setIsConnected(false)
+        if (retryCount < maxRetries) {
+          retryCount++
+          console.log(`[DEBUG] Connection attempt failed, retrying (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
+          setTimeout(attemptConnection, retryDelay)
         }
       }
-
-      ws.onerror = (error) => {
-        console.error('[DEBUG] WebSocket error:', error)
-      }
-
-      wsRef.current = ws
-      ;(window as any).ws = ws
-      startAudioCapture()
-      
-      setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'request_room_status' }))
-          ws.send(JSON.stringify({ type: 'request_test_audio' }))
-        }
-      }, 1000)
-    } catch (error) {
-      console.error('[DEBUG] Failed to connect:', error)
-      setIsConnected(false)
     }
+    
+    attemptConnection()
   }
 
   const disconnectFromRoom = () => {
