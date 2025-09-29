@@ -24,8 +24,8 @@ var subnetName = '${namePrefix}-${environment}-subnet'
 var nsgName = '${namePrefix}-${environment}-nsg'
 var publicIpName = '${namePrefix}-${environment}-pip'
 var nicName = '${namePrefix}-${environment}-nic'
-var storageAccountName = '${namePrefix}${environment}storage${uniqueString(resourceGroup().id)}'
-var keyVaultName = '${namePrefix}-${environment}-kv-${uniqueString(resourceGroup().id)}'
+var storageAccountName = 'sts3${take(uniqueString(resourceGroup().id), 18)}'
+var keyVaultName = 'sts3kv${take(uniqueString(resourceGroup().id), 16)}'
 
 // Network Security Group
 resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2023-04-01' = {
@@ -133,7 +133,7 @@ resource networkInterface 'Microsoft.Network/networkInterfaces@2023-04-01' = {
   name: nicName
   location: location
   properties: {
-    enableAcceleratedNetworking: true
+    enableAcceleratedNetworking: false
     ipConfigurations: [
       {
         name: 'ipconfig1'
@@ -238,6 +238,7 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2023-03-01' = {
 resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' = {
   parent: virtualMachine
   name: 'setupApplication'
+  location: location
   properties: {
     publisher: 'Microsoft.Azure.Extensions'
     type: 'CustomScript'
