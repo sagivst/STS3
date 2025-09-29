@@ -294,9 +294,9 @@ function App() {
             if (mediaRecorderRef.current && streamRef.current) {
               mediaRecorderRef.current.start()
             }
-          }, 100)
+          }, 50)
         }
-      }, 1000)
+      }, 2000)
       
       const cleanup = monitorAudioLevel()
       

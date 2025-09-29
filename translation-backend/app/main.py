@@ -55,14 +55,16 @@ class TranslationService:
             print(f"[DEBUG] Deepgram STT - Language: {language}")
             print(f"[DEBUG] Deepgram STT - First 50 bytes: {audio_data[:50].hex()}")
             
-            if len(audio_data) < 1000:
+            if len(audio_data) < 500:
                 print(f"[DEBUG] Audio data too small: {len(audio_data)} bytes")
                 return "", 0
                 
             options = PrerecordedOptions(
-                model="nova-2",
+                model="nova-3",
                 language=language,
                 smart_format=True,
+                punctuate=True,
+                utterances=True
             )
             
             print(f"[DEBUG] Deepgram STT - Sending request without explicit mimetype")
