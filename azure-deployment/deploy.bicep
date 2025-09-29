@@ -246,11 +246,11 @@ resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' =
     autoUpgradeMinorVersion: true
     settings: {
       fileUris: [
-        'https://raw.githubusercontent.com/sagivst/STS3/devin/1758881542-individual-component-tests/azure-deployment/setup-vm.sh?t=${uniqueString(resourceGroup().id)}'
+        'https://raw.githubusercontent.com/sagivst/STS3/devin/1758881542-individual-component-tests/azure-deployment/setup-vm-robust.sh?t=${uniqueString(resourceGroup().id)}'
       ]
     }
     protectedSettings: {
-      commandToExecute: 'bash setup-vm.sh'
+      commandToExecute: 'bash setup-vm-robust.sh'
     }
   }
 }
