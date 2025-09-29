@@ -30,7 +30,8 @@ sudo apt-get install -y nodejs
 
 sudo apt-get install -y nginx
 
-sudo snap install core; sudo snap refresh core
+sudo snap install core
+sudo snap refresh core
 sudo snap install --classic certbot
 sudo ln -sf /snap/bin/certbot /usr/bin/certbot
 
