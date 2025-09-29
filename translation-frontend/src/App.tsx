@@ -491,19 +491,26 @@ function App() {
     const startTime = Date.now()
     let testText: string
     let sourceLanguage: string
+    let targetLang: string
     
     if (chainedTestResults.transcribedText) {
       testText = chainedTestResults.transcribedText
-      sourceLanguage = "en"
-      setTranscript(`Testing DeepL translation with Deepgram result: "${testText}" (${sourceLanguage} → ja)`)
+      sourceLanguage = userLanguage
+      targetLang = userLanguage === "en" ? "ja" : "en"
+      setTranscript(`Testing DeepL translation with Deepgram result: "${testText}" (${sourceLanguage} → ${targetLang})`)
     } else {
-      testText = "Hello, this is a test message for translation."
-      sourceLanguage = "en"
+      if (userLanguage === "ja") {
+        testText = "こんにちは、これは翻訳のためのテストメッセージです。"
+        sourceLanguage = "ja"
+        targetLang = "en"
+      } else {
+        testText = "Hello, this is a test message for translation."
+        sourceLanguage = "en"
+        targetLang = "ja"
+      }
       setChainedTestResults({ transcribedText: testText, translatedText: '', isChainedTest: true })
-      setTranscript(`Testing DeepL translation with fallback text: "${testText}" (${sourceLanguage} → ja)`)
+      setTranscript(`Testing DeepL translation with fallback text: "${testText}" (${sourceLanguage} → ${targetLang})`)
     }
-    
-    const targetLang = "ja"
     
     wsRef.current.send(JSON.stringify({
       type: "test_deepl_translation",

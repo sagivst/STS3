@@ -99,17 +99,34 @@ class TranslationService:
     async def measure_deepl_latency(self, text: str, source_lang: str, target_lang: str) -> tuple:
         start_time = time.time()
         try:
+            deepl_lang_map = {
+                "en": "EN-US",
+                "ja": "JA", 
+                "es": "ES",
+                "fr": "FR",
+                "de": "DE",
+                "zh": "ZH"
+            }
+            
+            deepl_source = deepl_lang_map.get(source_lang, source_lang.upper())
+            deepl_target = deepl_lang_map.get(target_lang, target_lang.upper())
+            
+            print(f"[DEBUG] DeepL translation: '{text}' from {source_lang} ({deepl_source}) to {target_lang} ({deepl_target})")
             result = deepl_translator.translate_text(
                 text, 
-                source_lang=source_lang, 
-                target_lang=target_lang
+                source_lang=deepl_source, 
+                target_lang=deepl_target
             )
             end_time = time.time()
             self.latency_metrics["deepl"] = (end_time - start_time) * 1000
+            print(f"[DEBUG] DeepL result: '{result.text}', latency: {self.latency_metrics['deepl']}ms")
             
             return result.text, self.latency_metrics["deepl"]
         except Exception as e:
-            print(f"DeepL error: {e}")
+            print(f"[DEBUG] DeepL error: {e}")
+            print(f"[DEBUG] DeepL error type: {type(e)}")
+            import traceback
+            print(f"[DEBUG] DeepL traceback: {traceback.format_exc()}")
             return text, 0
     
     async def measure_azure_tts_latency(self, text: str, language: str, voice: str) -> tuple:
