@@ -53,11 +53,14 @@ function App() {
 
   const connectToRoom = async () => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
       const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
+      console.log('[DEBUG] Attempting to connect to WebSocket URL:', `${wsUrl}/ws/${roomId}`)
       const ws = new WebSocket(`${wsUrl}/ws/${roomId}`)
+      wsRef.current = ws
       
       ws.onopen = () => {
+        console.log('[DEBUG] WebSocket connection established')
         setIsConnected(true)
         ws.send(JSON.stringify({
           type: 'language_config',
@@ -66,22 +69,25 @@ function App() {
       }
 
       ws.onmessage = (event) => {
+        console.log('[DEBUG] WebSocket message received:', event.data)
         const message = JSON.parse(event.data)
-        console.log('[DEBUG] Received WebSocket message:', message.type, message)
+        console.log('[DEBUG] Parsed message type:', message.type)
         
         if (message.type === 'transcript') {
-          console.log('[DEBUG] Setting transcript:', message.text)
+          console.log('[DEBUG] Received transcript:', message.text)
           setTranscript(message.text)
         } else if (message.type === 'translated_audio') {
-          console.log('[DEBUG] Received translated audio, hex length:', message.audio?.length || 0)
+          console.log('[DEBUG] Received translated audio data')
           playTranslatedAudio(message.audio)
         } else if (message.type === 'latency_update') {
+          console.log('[DEBUG] Received latency metrics:', message.metrics)
           setLatencyMetrics(message.metrics)
         } else if (message.type === 'room_status') {
+          console.log('[DEBUG] Received room status:', message)
           setConnectedUsers(message.connected_users)
           setUserLanguages(message.user_languages)
         } else if (message.type === 'test_audio') {
-          console.log('[DEBUG] Received test audio, hex length:', message.audio?.length || 0)
+          console.log('[DEBUG] Received test audio data')
           playTranslatedAudio(message.audio)
         } else if (message.type === 'test_result') {
           console.log('[DEBUG] Received test result:', message)
@@ -127,12 +133,29 @@ function App() {
               }, 2000)
             }
           }
+        } else if (message.type === 'error') {
+          console.error('[DEBUG] Received error from backend:', message.message)
+          setTranscript(`Backend Error: ${message.message}`)
         }
       }
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        console.log('[DEBUG] WebSocket connection closed, code:', event.code, 'reason:', event.reason)
         setIsConnected(false)
         setIsRecording(false)
+        
+        if (event.code !== 1000 && event.code !== 1001) {
+          console.log('[DEBUG] Attempting to reconnect in 3 seconds...')
+          setTimeout(() => {
+            if (!isConnected) {
+              connectToRoom()
+            }
+          }, 3000)
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error('[DEBUG] WebSocket error:', error)
       }
 
       wsRef.current = ws
@@ -146,13 +169,15 @@ function App() {
         }
       }, 1000)
     } catch (error) {
-      console.error('Failed to connect:', error)
+      console.error('[DEBUG] Failed to connect:', error)
+      setIsConnected(false)
     }
   }
 
   const disconnectFromRoom = () => {
+    console.log('[DEBUG] Disconnecting from room')
     if (wsRef.current) {
-      wsRef.current.close()
+      wsRef.current.close(1000, 'User disconnected')
       wsRef.current = null
     }
     stopAudioCapture()
@@ -163,7 +188,8 @@ function App() {
 
   const startAudioCapture = async () => {
     try {
-      console.log('[DEBUG] Requesting microphone access...')
+      console.log('[DEBUG] Starting audio capture...')
+      console.log('[DEBUG] Checking navigator.mediaDevices availability:', !!navigator.mediaDevices)
       
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.error('[DEBUG] getUserMedia not supported')
@@ -188,7 +214,8 @@ function App() {
           autoGainControl: true
         }
       })
-      console.log('[DEBUG] Microphone access granted, stream:', stream)
+      console.log('[DEBUG] Audio stream obtained, tracks:', stream.getTracks().length)
+      console.log('[DEBUG] Audio track state:', stream.getTracks()[0]?.readyState)
       streamRef.current = stream
       
       const audioContext = new AudioContext()
@@ -202,29 +229,35 @@ function App() {
       analyserRef.current = analyser
       
       const mediaRecorder = new MediaRecorder(stream)
-      console.log('[DEBUG] MediaRecorder created, mimeType:', mediaRecorder.mimeType)
+      console.log('[DEBUG] MediaRecorder created successfully, mimeType:', mediaRecorder.mimeType)
       mediaRecorderRef.current = mediaRecorder
       
       const audioChunks: Blob[] = []
       
       mediaRecorder.ondataavailable = (event) => {
+        console.log('[DEBUG] MediaRecorder data available, size:', event.data.size)
         if (event.data.size > 0) {
-          console.log('[DEBUG] Audio data available, size:', event.data.size)
+          console.log('[DEBUG] Processing audio data for WebSocket transmission')
           audioChunks.push(event.data)
+        } else {
+          console.log('[DEBUG] Skipping empty audio data')
         }
       }
       
       mediaRecorder.onstop = async () => {
+        console.log('[DEBUG] MediaRecorder stopped, chunks:', audioChunks.length)
         if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
           const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
           const arrayBuffer = await audioBlob.arrayBuffer()
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-          console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
+          console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length)
           
           wsRef.current?.send(JSON.stringify({
             type: 'audio_data',
             audio: base64
           }))
+        } else {
+          console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
         }
         audioChunks.length = 0
       }
@@ -256,11 +289,12 @@ function App() {
         originalCleanup()
       }
     } catch (error) {
-      console.error('[DEBUG] Failed to start audio capture:', error)
+      console.error('[DEBUG] Error accessing microphone:', error)
       if (error instanceof Error) {
-        console.error('[DEBUG] Error name:', error.name)
+        console.error('[DEBUG] Error type:', error.constructor.name)
         console.error('[DEBUG] Error message:', error.message)
       }
+      setTranscript(`Error: Could not access microphone (0ms)`)
     }
   }
 
