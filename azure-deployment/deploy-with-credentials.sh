@@ -3,7 +3,7 @@
 
 set -e
 
-RESOURCE_GROUP="sts3-dev-rg"
+RESOURCE_GROUP="sts3-dev-rg-$(date +%s)"
 LOCATION="israelcentral"
 DEPLOYMENT_NAME="sts3-deployment-$(date +%s)"
 TEMPLATE_FILE="deploy.bicep"

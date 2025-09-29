@@ -9,25 +9,32 @@ sudo apt-get update -y
 sudo apt-get upgrade -y
 
 sudo apt-get install -y \
-    python3.10 \
-    python3.10-venv \
+    python3 \
+    python3-venv \
     python3-pip \
-    nodejs \
-    npm \
-    nginx \
-    certbot \
-    python3-certbot-nginx \
+    python3-dev \
     git \
     curl \
     wget \
     unzip \
     htop \
-    redis-server \
     build-essential \
     libasound2-dev \
     portaudio19-dev \
     ffmpeg \
-    jq
+    jq \
+    software-properties-common
+
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+sudo apt-get install -y nginx
+
+sudo snap install core; sudo snap refresh core
+sudo snap install --classic certbot
+sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+
+sudo apt-get install -y redis-server
 
 curl -sSL https://install.python-poetry.org | python3 -
 export PATH="/home/azureuser/.local/bin:$PATH"
@@ -38,7 +45,7 @@ git clone https://github.com/sagivst/STS3.git
 cd STS3
 
 cd translation-backend
-python3.10 -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install poetry
 
