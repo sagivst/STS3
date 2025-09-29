@@ -84,7 +84,7 @@ echo 'export PATH="/home/azureuser/.local/bin:$PATH"' >> /home/azureuser/.bashrc
 
 echo "Cloning STS3 repository..."
 cd /home/azureuser
-git clone https://github.com/sagivst/STS3.git
+git clone -b devin/1758881542-individual-component-tests https://github.com/sagivst/STS3.git
 cd STS3
 
 echo "Checking repository structure..."
