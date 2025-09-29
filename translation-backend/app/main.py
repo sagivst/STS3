@@ -8,8 +8,17 @@ import os
 import base64
 import tempfile
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
+
+try:
+    from azure.keyvault.secrets import SecretClient
+    from azure.identity import DefaultAzureCredential
+    AZURE_AVAILABLE = True
+except ImportError:
+    AZURE_AVAILABLE = False
+    logging.warning("Azure SDK not available. Using environment variables for secrets.")
 
 from deepgram import DeepgramClient, PrerecordedOptions, LiveTranscriptionEvents, LiveOptions
 import deepl
@@ -18,30 +27,61 @@ import pyttsx3
 import io
 import wave
 
-app = FastAPI()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Disable CORS. Do not remove this for full-stack development.
+app = FastAPI(title="Simultaneous Translation Service", version="1.0.0")
+
+def get_secret(secret_name: str, default_value: str = None) -> str:
+    """Get secret from Azure Key Vault or environment variable"""
+    if AZURE_AVAILABLE and os.getenv("AZURE_KEY_VAULT_URL"):
+        try:
+            credential = DefaultAzureCredential()
+            client = SecretClient(vault_url=os.getenv("AZURE_KEY_VAULT_URL"), credential=credential)
+            secret = client.get_secret(secret_name)
+            return secret.value
+        except Exception as e:
+            logger.warning(f"Failed to get secret {secret_name} from Key Vault: {e}")
+    
+    return os.getenv(secret_name.upper().replace("-", "_"), default_value)
+
+cors_origins_str = os.getenv("CORS_ORIGINS", '["*"]')
+try:
+    cors_origins = json.loads(cors_origins_str)
+except json.JSONDecodeError:
+    cors_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 rooms: Dict[str, List[WebSocket]] = {}
 user_languages: Dict[WebSocket, Dict[str, str]] = {}
 
-deepgram_client = DeepgramClient(os.getenv("DEEPGRAM_API_KEY", ""))
-deepl_translator = deepl.Translator(os.getenv("DEEPL_API_KEY", ""))
+deepgram_api_key = get_secret("deepgram-api-key", os.getenv("DEEPGRAM_API_KEY", ""))
+deepl_api_key = get_secret("deepl-api-key", os.getenv("DEEPL_API_KEY", ""))
+azure_speech_key = get_secret("azure-speech-key", os.getenv("AZURE_SPEECH_KEY", ""))
+azure_speech_region = os.getenv("AZURE_SPEECH_REGION", "germanywestcentral")
+
+deepgram_client = DeepgramClient(deepgram_api_key)
+deepl_translator = deepl.Translator(deepl_api_key)
 
 speech_config = speechsdk.SpeechConfig(
-    subscription=os.getenv("AZURE_SPEECH_KEY", ""),
-    region=os.getenv("AZURE_SPEECH_REGION", "")
+    subscription=azure_speech_key,
+    region=azure_speech_region
 )
 
 class TranslationService:
     def __init__(self):
+        self.deepgram_api_key = get_secret("deepgram-api-key", os.getenv("DEEPGRAM_API_KEY"))
+        self.deepl_api_key = get_secret("deepl-api-key", os.getenv("DEEPL_API_KEY"))
+        self.azure_speech_key = get_secret("azure-speech-key", os.getenv("AZURE_SPEECH_KEY"))
+        self.azure_speech_region = os.getenv("AZURE_SPEECH_REGION", "germanywestcentral")
+        
         self.latency_metrics = {
             "deepgram": 0.0,
             "deepl": 0.0,
@@ -242,6 +282,39 @@ class TranslationService:
             return b"", self.latency_metrics["azure_tts"]
 
 translation_service = TranslationService()
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint with detailed status"""
+    translation_service = TranslationService()
+    health_status = {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "version": "1.0.0",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "services": {
+            "deepgram": bool(translation_service.deepgram_api_key),
+            "deepl": bool(translation_service.deepl_api_key),
+            "azure_speech": bool(translation_service.azure_speech_key),
+        },
+        "azure": {
+            "key_vault_enabled": AZURE_AVAILABLE and bool(os.getenv("AZURE_KEY_VAULT_URL")),
+            "region": translation_service.azure_speech_region,
+        },
+        "performance": {
+            "active_connections": len(rooms.get("default", [])),
+            "rooms": list(rooms.keys()),
+        }
+    }
+    
+    if not all(health_status["services"].values()):
+        health_status["status"] = "degraded"
+        health_status["warnings"] = []
+        for service, configured in health_status["services"].items():
+            if not configured:
+                health_status["warnings"].append(f"{service} API key not configured")
+    
+    return health_status
 
 @app.get("/healthz")
 async def healthz():
