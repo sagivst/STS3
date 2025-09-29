@@ -16,9 +16,6 @@ param adminUsername string = 'azureuser'
 @description('SSH public key for VM access')
 param sshPublicKey string
 
-@description('Current UTC time for cache busting')
-param utcNow string = utcNow()
-
 // Variables
 var resourceGroupName = '${namePrefix}-${environment}-rg'
 var vmName = '${namePrefix}-${environment}-vm'
@@ -249,7 +246,7 @@ resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' =
     autoUpgradeMinorVersion: true
     settings: {
       fileUris: [
-        'https://raw.githubusercontent.com/sagivst/STS3/devin/1758881542-individual-component-tests/azure-deployment/setup-vm.sh?t=${utcNow()}'
+        'https://raw.githubusercontent.com/sagivst/STS3/devin/1758881542-individual-component-tests/azure-deployment/setup-vm.sh?t=${uniqueString(resourceGroup().id)}'
       ]
     }
     protectedSettings: {
