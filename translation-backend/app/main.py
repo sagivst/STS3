@@ -67,13 +67,24 @@ deepl_api_key = get_secret("deepl-api-key", os.getenv("DEEPL_API_KEY", ""))
 azure_speech_key = get_secret("azure-speech-key", os.getenv("AZURE_SPEECH_KEY", ""))
 azure_speech_region = os.getenv("AZURE_SPEECH_REGION", "germanywestcentral")
 
-deepgram_client = DeepgramClient(deepgram_api_key)
-deepl_translator = deepl.Translator(deepl_api_key)
+try:
+    deepgram_client = DeepgramClient(deepgram_api_key) if deepgram_api_key else None
+    logger.info(f"Deepgram client initialized: {'✓' if deepgram_client else '✗'}")
+except Exception as e:
+    logger.error(f"Failed to initialize Deepgram client: {e}")
+    deepgram_client = None
+
+try:
+    deepl_translator = deepl.Translator(deepl_api_key) if deepl_api_key else None
+    logger.info(f"DeepL translator initialized: {'✓' if deepl_translator else '✗'}")
+except Exception as e:
+    logger.error(f"Failed to initialize DeepL translator: {e}")
+    deepl_translator = None
 
 speech_config = speechsdk.SpeechConfig(
     subscription=azure_speech_key,
     region=azure_speech_region
-)
+) if azure_speech_key else None
 
 class TranslationService:
     def __init__(self):
@@ -91,13 +102,19 @@ class TranslationService:
     async def measure_deepgram_latency(self, audio_data: bytes, language: str) -> tuple:
         start_time = time.time()
         try:
+            if not deepgram_client:
+                print("[DEBUG] Deepgram client not initialized - API key missing")
+                end_time = time.time()
+                return "", (end_time - start_time) * 1000
+                
             print(f"[DEBUG] Deepgram STT - Audio data size: {len(audio_data)} bytes")
             print(f"[DEBUG] Deepgram STT - Language: {language}")
             print(f"[DEBUG] Deepgram STT - First 50 bytes: {audio_data[:50].hex()}")
             
             if len(audio_data) < 500:
                 print(f"[DEBUG] Audio data too small: {len(audio_data)} bytes")
-                return "", 0
+                end_time = time.time()
+                return "", (end_time - start_time) * 1000
                 
             options = PrerecordedOptions(
                 model="nova-3",
@@ -136,7 +153,8 @@ class TranslationService:
             print(f"[DEBUG] Deepgram error type: {type(e)}")
             import traceback
             print(f"[DEBUG] Deepgram traceback: {traceback.format_exc()}")
-            return "", 0
+            end_time = time.time()
+            return "", (end_time - start_time) * 1000
     
     async def measure_deepl_latency(self, text: str, source_lang: str, target_lang: str) -> tuple:
         start_time = time.time()
