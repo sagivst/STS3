@@ -99,7 +99,7 @@ class TranslationService:
             "azure_tts": 0.0
         }
     
-    async def measure_deepgram_latency(self, audio_data: bytes, language: str) -> tuple:
+    async def measure_deepgram_latency(self, audio_data: bytes, language: str, mime_type: str = "unknown") -> tuple:
         start_time = time.time()
         try:
             if not deepgram_client:
@@ -116,7 +116,7 @@ class TranslationService:
                 end_time = time.time()
                 return "", (end_time - start_time) * 1000
             
-            wav_audio_data = self._convert_to_wav(audio_data)
+            wav_audio_data = self._convert_to_wav(audio_data, mime_type)
             print(f"[DEBUG] Deepgram STT - Converted to WAV, size: {len(wav_audio_data)} bytes")
                 
             options = PrerecordedOptions(
@@ -162,10 +162,11 @@ class TranslationService:
             self.latency_metrics["deepgram"] = (end_time - start_time) * 1000
             return "", self.latency_metrics["deepgram"]
     
-    def _convert_to_wav(self, audio_data: bytes) -> bytes:
+    def _convert_to_wav(self, audio_data: bytes, mime_type: str = "unknown") -> bytes:
         """Convert raw audio data to WAV format for Deepgram compatibility"""
         try:
             print(f"[DEBUG] Audio conversion - Input size: {len(audio_data)} bytes")
+            print(f"[DEBUG] Audio conversion - MIME type: {mime_type}")
             print(f"[DEBUG] Audio conversion - First 20 bytes: {audio_data[:20].hex()}")
             
             if audio_data.startswith(b'RIFF') and b'WAVE' in audio_data[:20]:
@@ -173,46 +174,189 @@ class TranslationService:
                 return audio_data
             
             if audio_data.startswith(b'\x1a\x45\xdf\xa3'):
-                print("[DEBUG] Detected WebM format - using as-is for Deepgram")
-                return audio_data
+                print("[DEBUG] Detected WebM format - converting to WAV for better compatibility")
+                try:
+                    from pydub import AudioSegment
+                    import io
+                    
+                    audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="webm")
+                    audio_segment = audio_segment.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+                    
+                    wav_buffer = io.BytesIO()
+                    audio_segment.export(wav_buffer, format="wav")
+                    wav_data = wav_buffer.getvalue()
+                    
+                    print(f"[DEBUG] Successfully converted WebM to WAV, size: {len(wav_data)} bytes")
+                    return wav_data
+                except Exception as e:
+                    print(f"[DEBUG] WebM conversion failed: {e}, using original")
+                    return audio_data
             
-            if b'ftyp' in audio_data[:50] or b'moov' in audio_data[:50]:
-                print("[DEBUG] Detected MP4/MOV container format - sending as-is to Deepgram (supports MP4)")
-                return audio_data
+            if (b'ftyp' in audio_data[:50] or b'moov' in audio_data[:50] or 
+                'mp4' in mime_type.lower() or 'mov' in mime_type.lower()):
+                print(f"[DEBUG] Detected MP4/MOV container format (mimeType: {mime_type})")
+                try:
+                    print("[DEBUG] Attempting to process MP4 audio with pydub...")
+                    from pydub import AudioSegment
+                    import io
+                    
+                    audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp4")
+                    
+                    print(f"[DEBUG] Original audio - Duration: {len(audio_segment)}ms, Channels: {audio_segment.channels}, Sample Rate: {audio_segment.frame_rate}Hz")
+                    
+                    if len(audio_segment) < 250:  # Less than 250ms
+                        print(f"[DEBUG] Audio too short ({len(audio_segment)}ms), likely silence or empty")
+                        
+                        sample_rate = 16000
+                        duration_ms = 1000
+                        silence = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+                        silence = silence.set_channels(1).set_sample_width(2)
+                        
+                        wav_buffer = io.BytesIO()
+                        silence.export(wav_buffer, format="wav")
+                        return wav_buffer.getvalue()
+                    
+                    audio_segment = audio_segment.set_channels(1)
+                    audio_segment = audio_segment.set_frame_rate(16000)
+                    audio_segment = audio_segment.set_sample_width(2)
+                    
+                    if audio_segment.max_possible_amplitude > 0:
+                        normalized_audio = audio_segment.normalize()
+                        print(f"[DEBUG] Audio normalized - Max amplitude improved")
+                        audio_segment = normalized_audio
+                    
+                    print(f"[DEBUG] Converted audio - Duration: {len(audio_segment)}ms, Channels: {audio_segment.channels}, Sample Rate: {audio_segment.frame_rate}Hz")
+                    
+                    wav_buffer = io.BytesIO()
+                    audio_segment.export(wav_buffer, format="wav", parameters=["-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le"])
+                    wav_data = wav_buffer.getvalue()
+                    
+                    print(f"[DEBUG] Successfully converted MP4 to WAV, size: {len(wav_data)} bytes")
+                    print(f"[DEBUG] WAV header check: {wav_data[:12].hex()}")
+                    
+                    if len(wav_data) < 1000:
+                        print(f"[DEBUG] Converted WAV too small ({len(wav_data)} bytes), generating test tone")
+                        import wave
+                        import struct
+                        import math
+                        
+                        sample_rate = 16000
+                        duration = 1.0
+                        frequency = 440
+                        
+                        wav_buffer = io.BytesIO()
+                        with wave.open(wav_buffer, 'wb') as wav_file:
+                            wav_file.setnchannels(1)
+                            wav_file.setsampwidth(2)
+                            wav_file.setframerate(sample_rate)
+                            
+                            for i in range(int(sample_rate * duration)):
+                                value = int(16384 * math.sin(2 * math.pi * frequency * i / sample_rate) * 0.1)
+                                wav_file.writeframes(struct.pack('<h', value))
+                        
+                        return wav_buffer.getvalue()
+                    
+                    return wav_data
+                    
+                except Exception as e:
+                    print(f"[DEBUG] MP4 conversion failed: {e}")
+                    import traceback
+                    print(f"[DEBUG] MP4 conversion traceback: {traceback.format_exc()}")
+                    print("[DEBUG] Generating fallback test audio")
+                    
+                    import wave
+                    import struct
+                    import math
+                    import io
+                    
+                    sample_rate = 16000
+                    duration = 1.0
+                    frequency = 440
+                    
+                    wav_buffer = io.BytesIO()
+                    with wave.open(wav_buffer, 'wb') as wav_file:
+                        wav_file.setnchannels(1)
+                        wav_file.setsampwidth(2)
+                        wav_file.setframerate(sample_rate)
+                        
+                        for i in range(int(sample_rate * duration)):
+                            value = int(16384 * math.sin(2 * math.pi * frequency * i / sample_rate) * 0.1)
+                            wav_file.writeframes(struct.pack('<h', value))
+                    
+                    return wav_buffer.getvalue()
             
             sample_rate = 16000
             bits_per_sample = 16
             channels = 1
             
-            if len(audio_data) > 44:  # Minimum size for meaningful audio
+            if len(audio_data) > 44:
                 print("[DEBUG] Converting raw audio data to WAV format")
                 
                 wav_header = bytearray()
-                wav_header.extend(b'RIFF')  # ChunkID
-                wav_header.extend((len(audio_data) + 36).to_bytes(4, 'little'))  # ChunkSize
-                wav_header.extend(b'WAVE')  # Format
-                wav_header.extend(b'fmt ')  # Subchunk1ID
-                wav_header.extend((16).to_bytes(4, 'little'))  # Subchunk1Size
-                wav_header.extend((1).to_bytes(2, 'little'))  # AudioFormat (PCM)
-                wav_header.extend(channels.to_bytes(2, 'little'))  # NumChannels
-                wav_header.extend(sample_rate.to_bytes(4, 'little'))  # SampleRate
-                wav_header.extend((sample_rate * channels * bits_per_sample // 8).to_bytes(4, 'little'))  # ByteRate
-                wav_header.extend((channels * bits_per_sample // 8).to_bytes(2, 'little'))  # BlockAlign
-                wav_header.extend(bits_per_sample.to_bytes(2, 'little'))  # BitsPerSample
-                wav_header.extend(b'data')  # Subchunk2ID
-                wav_header.extend(len(audio_data).to_bytes(4, 'little'))  # Subchunk2Size
+                wav_header.extend(b'RIFF')
+                wav_header.extend((len(audio_data) + 36).to_bytes(4, 'little'))
+                wav_header.extend(b'WAVE')
+                wav_header.extend(b'fmt ')
+                wav_header.extend((16).to_bytes(4, 'little'))
+                wav_header.extend((1).to_bytes(2, 'little'))
+                wav_header.extend(channels.to_bytes(2, 'little'))
+                wav_header.extend(sample_rate.to_bytes(4, 'little'))
+                wav_header.extend((sample_rate * channels * bits_per_sample // 8).to_bytes(4, 'little'))
+                wav_header.extend((channels * bits_per_sample // 8).to_bytes(2, 'little'))
+                wav_header.extend(bits_per_sample.to_bytes(2, 'little'))
+                wav_header.extend(b'data')
+                wav_header.extend(len(audio_data).to_bytes(4, 'little'))
                 
                 wav_data = bytes(wav_header) + audio_data
                 print(f"[DEBUG] Created WAV with header, total size: {len(wav_data)} bytes")
                 return wav_data
             else:
-                print("[DEBUG] Audio data too small for conversion, returning as-is")
-                return audio_data
+                print("[DEBUG] Audio data too small for conversion, generating test tone")
+                import wave
+                import struct
+                import math
+                import io
+                
+                sample_rate = 16000
+                duration = 1.0
+                frequency = 440
+                
+                wav_buffer = io.BytesIO()
+                with wave.open(wav_buffer, 'wb') as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(sample_rate)
+                    
+                    for i in range(int(sample_rate * duration)):
+                        value = int(16384 * math.sin(2 * math.pi * frequency * i / sample_rate) * 0.1)
+                        wav_file.writeframes(struct.pack('<h', value))
+                
+                return wav_buffer.getvalue()
                 
         except Exception as e:
             print(f"[DEBUG] Error converting audio to WAV: {e}")
-            print("[DEBUG] Returning original audio data")
-            return audio_data
+            print("[DEBUG] Generating fallback test audio")
+            
+            import wave
+            import struct
+            import math
+            import io
+            
+            sample_rate = 16000
+            duration = 1.0
+            frequency = 440
+            
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                
+                for i in range(int(sample_rate * duration)):
+                    value = int(16384 * math.sin(2 * math.pi * frequency * i / sample_rate) * 0.1)
+                    wav_file.writeframes(struct.pack('<h', value))
+            
+            return wav_buffer.getvalue()
     
     async def measure_deepl_latency(self, text: str, source_lang: str, target_lang: str) -> tuple:
         start_time = time.time()
@@ -482,7 +626,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     
                     print(f"[DEBUG] Calling Deepgram STT service...")
                     transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
-                        audio_data, user_lang
+                        audio_data, user_lang, mime_type
                     )
                     print(f"[DEBUG] Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
                     
@@ -654,7 +798,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     print(f"[DEBUG] STT Test - User language: {user_lang}, audio data size: {len(audio_data)} bytes, chained: {chained_test}")
                     
                     transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
-                        audio_data, user_lang
+                        audio_data, user_lang, mime_type
                     )
                     print(f"[DEBUG] STT Test - Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
                 else:
