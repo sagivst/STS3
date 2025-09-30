@@ -626,9 +626,19 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-4xl mx-auto space-y-6">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Simultaneous Translation</h1>
-          <p className="text-lg text-gray-600">Simultaneous Translation App</p>
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center mb-4">
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-1 mb-2">
+                <span className="text-6xl font-black text-gray-900 tracking-tight">STS</span>
+                <div className="w-8 h-8 border-2 border-gray-900 rounded-full flex items-center justify-center ml-2">
+                  <span className="text-sm font-bold text-gray-900">©</span>
+                </div>
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900 mb-1">Simultaneous Translation Sys</h1>
+              <p className="text-sm text-gray-600 font-medium">By Sagiv S.</p>
+            </div>
+          </div>
         </div>
 
         <Card>
