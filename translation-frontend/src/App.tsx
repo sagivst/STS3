@@ -85,7 +85,6 @@ function App() {
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'request_room_status' }))
-              ws.send(JSON.stringify({ type: 'request_test_audio' }))
             }
           }, 1000)
         }
