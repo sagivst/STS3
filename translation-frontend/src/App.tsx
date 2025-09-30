@@ -18,9 +18,13 @@ function App() {
   const [userLanguage, setUserLanguage] = useState('en')
   const [isConnected, setIsConnected] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [isVoiceActive, setIsVoiceActive] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
+  
+  const VAD_THRESHOLD = 30 // Audio level threshold for voice detection
+  const VAD_SILENCE_DURATION = 1500 // ms of silence before stopping recording
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics>({
@@ -249,8 +253,13 @@ function App() {
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      const mediaRecorder = new MediaRecorder(stream)
-      console.log('[DEBUG] MediaRecorder created successfully, mimeType:', mediaRecorder.mimeType)
+      let mimeType = 'audio/wav'
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm;codecs=opus'
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType })
+      console.log('[DEBUG] MediaRecorder created with mimeType:', mediaRecorder.mimeType)
       mediaRecorderRef.current = mediaRecorder
       
       const audioChunks: Blob[] = []
@@ -283,20 +292,8 @@ function App() {
         audioChunks.length = 0
       }
       
-      mediaRecorder.start()
-      setIsRecording(true)
-      console.log('[DEBUG] MediaRecorder started')
-      
-      const recordingInterval = setInterval(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.stop()
-          setTimeout(() => {
-            if (mediaRecorderRef.current && streamRef.current) {
-              mediaRecorderRef.current.start()
-            }
-          }, 50)
-        }
-      }, 2000)
+      console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
+      setIsRecording(false)
       
       const cleanup = monitorAudioLevel()
       
@@ -305,7 +302,6 @@ function App() {
       }
       const originalCleanup = cleanupRef.current
       cleanupRef.current = () => {
-        clearInterval(recordingInterval)
         if (cleanup) cleanup()
         originalCleanup()
       }
@@ -347,18 +343,75 @@ function App() {
     setAudioLevel(0)
   }
 
+  const startRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
+      mediaRecorderRef.current.start()
+      setIsRecording(true)
+      console.log('[DEBUG] Voice detected - starting recording')
+      
+      const recordingInterval = setInterval(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop()
+          setTimeout(() => {
+            if (mediaRecorderRef.current && streamRef.current && isVoiceActive) {
+              mediaRecorderRef.current.start()
+            }
+          }, 50)
+        }
+      }, 2000)
+      
+      if (cleanupRef.current) {
+        const originalCleanup = cleanupRef.current
+        cleanupRef.current = () => {
+          clearInterval(recordingInterval)
+          originalCleanup()
+        }
+      }
+    }
+  }
+  
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+      setIsRecording(false)
+      console.log('[DEBUG] Silence detected - stopping recording')
+    }
+  }
+
   const monitorAudioLevel = (): (() => void) | null => {
     if (!analyserRef.current) return null
     
     const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
     let animationId: number
+    let silenceTimeout: NodeJS.Timeout | null = null
     
     const updateLevel = () => {
       if (!analyserRef.current) return
       
       analyserRef.current.getByteFrequencyData(dataArray)
       const average = dataArray.reduce((a, b) => a + b) / dataArray.length
-      setAudioLevel(Math.min(100, (average / 128) * 100))
+      const level = Math.min(100, (average / 128) * 100)
+      setAudioLevel(level)
+      
+      const isCurrentlyActive = level > VAD_THRESHOLD
+      setIsVoiceActive(isCurrentlyActive)
+      
+      if (isCurrentlyActive && !isRecording) {
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout)
+          silenceTimeout = null
+        }
+        startRecording()
+      } else if (!isCurrentlyActive && isRecording) {
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout)
+        }
+        silenceTimeout = setTimeout(() => {
+          if (audioLevel <= VAD_THRESHOLD) {
+            stopRecording()
+          }
+        }, VAD_SILENCE_DURATION)
+      }
       
       animationId = requestAnimationFrame(updateLevel)
     }
@@ -368,6 +421,9 @@ function App() {
     return () => {
       if (animationId) {
         cancelAnimationFrame(animationId)
+      }
+      if (silenceTimeout) {
+        clearTimeout(silenceTimeout)
       }
     }
   }
@@ -701,8 +757,8 @@ function App() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Audio Level</span>
-                  <Badge variant={isRecording ? "default" : "secondary"}>
-                    {isRecording ? "Recording" : "Inactive"}
+                  <Badge variant={isVoiceActive ? "default" : "secondary"}>
+                    {isVoiceActive ? "Recording" : "Inactive"}
                   </Badge>
                 </div>
                 <Progress value={audioLevel} className="h-3" />

@@ -120,11 +120,13 @@ class TranslationService:
             print(f"[DEBUG] Deepgram STT - Converted to WAV, size: {len(wav_audio_data)} bytes")
                 
             options = PrerecordedOptions(
-                model="nova-3",
+                model="nova-2",
                 language=language,
                 smart_format=True,
                 punctuate=True,
-                utterances=True
+                utterances=True,
+                encoding="linear16",
+                sample_rate=16000
             )
             
             print(f"[DEBUG] Deepgram STT - Sending WAV audio to Deepgram")
@@ -165,6 +167,14 @@ class TranslationService:
         try:
             if audio_data.startswith(b'RIFF') and b'WAVE' in audio_data[:20]:
                 print("[DEBUG] Audio data is already in WAV format")
+                return audio_data
+            
+            if audio_data.startswith(b'\x1a\x45\xdf\xa3'):
+                print("[DEBUG] Detected WebM format - using as-is for Deepgram")
+                return audio_data
+            
+            if b'ftyp' in audio_data[:50] or b'moov' in audio_data[:50]:
+                print("[DEBUG] Detected MP4/MOV container format - using as-is for Deepgram")
                 return audio_data
             
             sample_rate = 16000
