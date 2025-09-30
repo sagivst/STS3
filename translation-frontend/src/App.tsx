@@ -255,6 +255,7 @@ function App() {
       
       let mimeType = 'audio/webm;codecs=opus'
       if (!MediaRecorder.isTypeSupported(mimeType)) {
+        console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
         mimeType = 'audio/webm'
         if (!MediaRecorder.isTypeSupported(mimeType)) {
           console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
@@ -516,6 +517,7 @@ function App() {
       })
       let mimeType = 'audio/webm;codecs=opus'
       if (!MediaRecorder.isTypeSupported(mimeType)) {
+        console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
         mimeType = 'audio/webm'
         if (!MediaRecorder.isTypeSupported(mimeType)) {
           console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
