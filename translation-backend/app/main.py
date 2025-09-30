@@ -630,59 +630,16 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     )
                     print(f"[DEBUG] Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
                     
-                    if transcript and transcript.strip():
-                        print(f"[DEBUG] Valid transcript received, sending to client: '{transcript}'")
-                        await websocket.send_text(json.dumps({
-                            "type": "transcript",
-                            "text": transcript
-                        }))
-                        print(f"[DEBUG] Successfully sent transcript to client: '{transcript}'")
-                    else:
-                        print(f"[DEBUG] No transcript from Deepgram - sending empty transcript")
-                        await websocket.send_text(json.dumps({
-                            "type": "transcript",
-                            "text": ""
-                        }))
+                    print(f"[DEBUG] Sending transcript to client: '{transcript}'")
+                    await websocket.send_text(json.dumps({
+                        "type": "transcript",
+                        "text": transcript if transcript else ""
+                    }))
+                    print(f"[DEBUG] Successfully sent transcript to client: '{transcript}'")
                     
                     if transcript and transcript.strip():
                         room_clients = rooms.get(room_id, [])
                         print(f"[DEBUG] Room has {len(room_clients)} clients")
-                        
-                        if len(room_clients) == 1:
-                            print(f"[DEBUG] Single user room - adding fallback translation for testing")
-                            target_lang = "ja" if user_lang == "en" else "en"
-                            
-                            translated_text, deepl_latency = await translation_service.measure_deepl_latency(
-                                transcript, user_lang, target_lang
-                            )
-                            print(f"[DEBUG] Fallback translation: '{translated_text}', latency: {deepl_latency}ms")
-                            
-                            if translated_text and translated_text.strip():
-                                voice_map = {
-                                    "en": "en-US-JennyNeural",
-                                    "ja": "ja-JP-NanamiNeural",
-                                    "es": "es-ES-ElviraNeural",
-                                    "fr": "fr-FR-DeniseNeural",
-                                    "de": "de-DE-KatjaNeural",
-                                    "zh": "zh-CN-XiaoxiaoNeural"
-                                }
-                                
-                                audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
-                                    translated_text, target_lang, voice_map.get(target_lang, "en-US-JennyNeural")
-                                )
-                                print(f"[DEBUG] Fallback TTS audio size: {len(audio_output)} bytes, latency: {azure_latency}ms")
-                                
-                                if audio_output:
-                                    hex_audio = audio_output.hex()
-                                    print(f"[DEBUG] Sending fallback translated audio, hex length: {len(hex_audio)}")
-                                    
-                                    await websocket.send_text(json.dumps({
-                                        "type": "translated_audio",
-                                        "audio": hex_audio,
-                                        "original_text": transcript,
-                                        "translated_text": translated_text
-                                    }))
-                                    print(f"[DEBUG] Sent fallback translated audio")
                         
                         for other_ws in room_clients:
                             if other_ws != websocket and other_ws in user_languages:
