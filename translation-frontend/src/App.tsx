@@ -253,10 +253,15 @@ function App() {
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      let mimeType = 'audio/wav'
+      let mimeType = 'audio/webm;codecs=opus'
       if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/webm;codecs=opus'
+        mimeType = 'audio/webm'
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
+          mimeType = 'audio/mp4'
+        }
       }
+      console.log('[DEBUG] Selected mimeType for MediaRecorder:', mimeType)
       
       const mediaRecorder = new MediaRecorder(stream, { mimeType })
       console.log('[DEBUG] MediaRecorder created with mimeType:', mediaRecorder.mimeType)
@@ -277,14 +282,16 @@ function App() {
       mediaRecorder.onstop = async () => {
         console.log('[DEBUG] MediaRecorder stopped, chunks:', audioChunks.length)
         if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
+          const actualMimeType = mediaRecorder.mimeType
+          const audioBlob = new Blob(audioChunks, { type: actualMimeType })
           const arrayBuffer = await audioBlob.arrayBuffer()
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-          console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length)
+          console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType)
           
           wsRef.current?.send(JSON.stringify({
             type: 'audio_data',
-            audio: base64
+            audio: base64,
+            mimeType: actualMimeType
           }))
         } else {
           console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
@@ -507,7 +514,17 @@ function App() {
           autoGainControl: true
         }
       })
-      const mediaRecorder = new MediaRecorder(stream)
+      let mimeType = 'audio/webm;codecs=opus'
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm'
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
+          mimeType = 'audio/mp4'
+        }
+      }
+      console.log('[DEBUG] Selected mimeType for MediaRecorder:', mimeType)
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType })
       const audioChunks: Blob[] = []
       
       mediaRecorder.ondataavailable = (event) => {
@@ -515,13 +532,15 @@ function App() {
       }
       
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks)
+        const actualMimeType = mediaRecorder.mimeType
+        const audioBlob = new Blob(audioChunks, { type: actualMimeType })
         const arrayBuffer = await audioBlob.arrayBuffer()
         const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
         
         wsRef.current?.send(JSON.stringify({
           type: "test_deepgram_stt",
           audio: base64Audio,
+          mimeType: actualMimeType,
           test_start_time: startTime,
           chained_test: true
         }))

@@ -125,8 +125,8 @@ class TranslationService:
                 smart_format=True,
                 punctuate=True,
                 utterances=True,
-                encoding="linear16",
-                sample_rate=16000
+                detect_language=False,
+                diarize=False
             )
             
             print(f"[DEBUG] Deepgram STT - Sending WAV audio to Deepgram")
@@ -165,6 +165,9 @@ class TranslationService:
     def _convert_to_wav(self, audio_data: bytes) -> bytes:
         """Convert raw audio data to WAV format for Deepgram compatibility"""
         try:
+            print(f"[DEBUG] Audio conversion - Input size: {len(audio_data)} bytes")
+            print(f"[DEBUG] Audio conversion - First 20 bytes: {audio_data[:20].hex()}")
+            
             if audio_data.startswith(b'RIFF') and b'WAVE' in audio_data[:20]:
                 print("[DEBUG] Audio data is already in WAV format")
                 return audio_data
@@ -174,7 +177,7 @@ class TranslationService:
                 return audio_data
             
             if b'ftyp' in audio_data[:50] or b'moov' in audio_data[:50]:
-                print("[DEBUG] Detected MP4/MOV container format - using as-is for Deepgram")
+                print("[DEBUG] Detected MP4/MOV container format - sending as-is to Deepgram (supports MP4)")
                 return audio_data
             
             sample_rate = 16000
@@ -199,7 +202,9 @@ class TranslationService:
                 wav_header.extend(b'data')  # Subchunk2ID
                 wav_header.extend(len(audio_data).to_bytes(4, 'little'))  # Subchunk2Size
                 
-                return bytes(wav_header) + audio_data
+                wav_data = bytes(wav_header) + audio_data
+                print(f"[DEBUG] Created WAV with header, total size: {len(wav_data)} bytes")
+                return wav_data
             else:
                 print("[DEBUG] Audio data too small for conversion, returning as-is")
                 return audio_data
@@ -463,8 +468,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         continue
                     
                     audio_data = base64.b64decode(message["audio"])
+                    mime_type = message.get("mimeType", "unknown")
                     user_lang = user_languages[websocket]["language"]
-                    print(f"[DEBUG] Audio data size: {len(audio_data)} bytes, user language: {user_lang}")
+                    print(f"[DEBUG] Audio data size: {len(audio_data)} bytes, mimeType: {mime_type}, user language: {user_lang}")
                     
                     if len(audio_data) == 0:
                         print(f"[DEBUG] ERROR: Empty audio data")
@@ -641,14 +647,45 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 print(f"[DEBUG] Individual Deepgram STT test requested")
                 test_start_time = message.get("test_start_time", time.time() * 1000)
                 chained_test = message.get("chained_test", False)
-                audio_data = base64.b64decode(message["audio"])
-                user_lang = user_languages[websocket]["language"]
-                print(f"[DEBUG] STT Test - User language: {user_lang}, audio data size: {len(audio_data)} bytes, chained: {chained_test}")
                 
-                transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
-                    audio_data, user_lang
-                )
-                print(f"[DEBUG] STT Test - Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
+                if "audio" in message:
+                    audio_data = base64.b64decode(message["audio"])
+                    user_lang = user_languages[websocket]["language"]
+                    print(f"[DEBUG] STT Test - User language: {user_lang}, audio data size: {len(audio_data)} bytes, chained: {chained_test}")
+                    
+                    transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
+                        audio_data, user_lang
+                    )
+                    print(f"[DEBUG] STT Test - Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
+                else:
+                    print(f"[DEBUG] STT Test - Using synthetic test audio for latency measurement")
+                    user_lang = user_languages[websocket]["language"]
+                    
+                    import io
+                    import wave
+                    import struct
+                    
+                    sample_rate = 16000
+                    duration = 1.0  # 1 second
+                    frequency = 440  # A4 note
+                    
+                    wav_buffer = io.BytesIO()
+                    with wave.open(wav_buffer, 'wb') as wav_file:
+                        wav_file.setnchannels(1)  # Mono
+                        wav_file.setsampwidth(2)  # 16-bit
+                        wav_file.setframerate(sample_rate)
+                        
+                        for i in range(int(sample_rate * duration)):
+                            value = int(16384 * 0.1)  # Low volume tone
+                            wav_file.writeframes(struct.pack('<h', value))
+                    
+                    test_audio = wav_buffer.getvalue()
+                    print(f"[DEBUG] Generated test audio: {len(test_audio)} bytes")
+                    
+                    transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
+                        test_audio, user_lang
+                    )
+                    print(f"[DEBUG] STT Test - Synthetic audio transcript: '{transcript}', latency: {deepgram_latency}ms")
                 
                 total_time = time.time() * 1000 - test_start_time
                 
