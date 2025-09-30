@@ -353,7 +353,7 @@ function App() {
 
   const startRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
-      mediaRecorderRef.current.start() // Remove timeslice to prevent audio fragmentation
+      mediaRecorderRef.current.start()
       setIsRecording(true)
       console.log('[DEBUG] Voice detected - starting recording')
       
