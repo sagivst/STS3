@@ -591,6 +591,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 test_text = "Audio test successful. Translation pipeline is working."
                 print(f"[DEBUG] Test audio requested for language: {user_lang}")
                 
+                dummy_audio = b'dummy_audio_data_for_testing' * 20
+                _, stt_latency = await translation_service.measure_deepgram_latency(dummy_audio, user_lang)
+                print(f"[DEBUG] STT test completed for latency metrics: {stt_latency}ms")
+                
                 voice_map = {
                     "en": "en-US-JennyNeural",
                     "ja": "ja-JP-NanamiNeural",
