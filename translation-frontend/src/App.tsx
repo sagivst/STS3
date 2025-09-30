@@ -80,8 +80,6 @@ function App() {
             language: userLanguage
           }))
           
-          startAudioCapture()
-          
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'request_room_status' }))
@@ -300,7 +298,8 @@ function App() {
       }
       
       console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
-      setIsRecording(false)
+      setIsRecording(true)
+      setTranscript('Recording initialized. Speak to see transcription...')
       
       const cleanup = monitorAudioLevel()
       
@@ -317,8 +316,25 @@ function App() {
       if (error instanceof Error) {
         console.error('[DEBUG] Error type:', error.constructor.name)
         console.error('[DEBUG] Error message:', error.message)
+        
+        if (error.name === 'NotAllowedError') {
+          setTranscript('Microphone access denied. Please grant permission and try again.')
+        } else if (error.name === 'NotFoundError') {
+          setTranscript('No microphone found. Please connect a microphone and try again.')
+        } else {
+          setTranscript(`Microphone error: ${error.message}`)
+        }
       }
-      setTranscript(`Error: Could not access microphone (0ms)`)
+      
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const fallbackMessage = "Testing transcription pipeline - microphone access failed";
+        wsRef.current.send(JSON.stringify({
+          type: 'test_transcription_fallback',
+          text: fallbackMessage,
+          language: userLanguage
+        }));
+        setTranscript(`Fallback mode: "${fallbackMessage}" (microphone access failed)`);
+      }
     }
   }
 
@@ -722,6 +738,23 @@ function App() {
                 )}
               </Button>
             </div>
+            
+            {isConnected && !isRecording && (
+              <div className="mt-4 text-center">
+                <Button 
+                  onClick={startAudioCapture}
+                  variant="default"
+                  size="lg"
+                  className="flex items-center gap-2"
+                >
+                  <Mic className="h-5 w-5" />
+                  Start Recording for Real-Time Translation
+                </Button>
+                <p className="text-sm text-gray-600 mt-2">
+                  Click to grant microphone permission and enable real-time transcription
+                </p>
+              </div>
+            )}
             
             {isConnected && (
               <div className="mt-4 space-y-3">

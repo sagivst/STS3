@@ -864,6 +864,32 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     "message": f"TTS generated {len(audio_output)} bytes" if audio_output else "TTS failed - no audio generated",
                     "audio": hex_audio
                 }))
+            
+            elif message["type"] == "test_transcription_fallback":
+                print(f"[DEBUG] Transcription fallback requested")
+                fallback_text = message["text"]
+                user_lang = message["language"]
+                print(f"[DEBUG] Fallback text: '{fallback_text}', language: {user_lang}")
+                
+                await websocket.send_text(json.dumps({
+                    "type": "transcript",
+                    "text": fallback_text
+                }))
+                
+                if fallback_text and fallback_text.strip():
+                    room_clients = rooms.get(room_id, [])
+                    for other_ws in room_clients:
+                        if other_ws != websocket and other_ws in user_languages:
+                            other_lang = user_languages[other_ws]["language"]
+                            if other_lang != user_lang:
+                                translated_text, _ = await translation_service.measure_deepl_latency(
+                                    fallback_text, user_lang, other_lang
+                                )
+                                if translated_text:
+                                    await other_ws.send_text(json.dumps({
+                                        "type": "transcript",
+                                        "text": f"[Translated] {translated_text}"
+                                    }))
     
     except WebSocketDisconnect:
         if room_id in rooms:
