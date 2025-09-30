@@ -115,6 +115,9 @@ class TranslationService:
                 print(f"[DEBUG] Audio data too small: {len(audio_data)} bytes")
                 end_time = time.time()
                 return "", (end_time - start_time) * 1000
+            
+            wav_audio_data = self._convert_to_wav(audio_data)
+            print(f"[DEBUG] Deepgram STT - Converted to WAV, size: {len(wav_audio_data)} bytes")
                 
             options = PrerecordedOptions(
                 model="nova-3",
@@ -124,9 +127,9 @@ class TranslationService:
                 utterances=True
             )
             
-            print(f"[DEBUG] Deepgram STT - Sending request without explicit mimetype")
+            print(f"[DEBUG] Deepgram STT - Sending WAV audio to Deepgram")
             response = deepgram_client.listen.prerecorded.v("1").transcribe_file(
-                {"buffer": audio_data}, options
+                {"buffer": wav_audio_data}, options
             )
             
             end_time = time.time()
@@ -155,6 +158,45 @@ class TranslationService:
             print(f"[DEBUG] Deepgram traceback: {traceback.format_exc()}")
             end_time = time.time()
             return "", (end_time - start_time) * 1000
+    
+    def _convert_to_wav(self, audio_data: bytes) -> bytes:
+        """Convert raw audio data to WAV format for Deepgram compatibility"""
+        try:
+            if audio_data.startswith(b'RIFF') and b'WAVE' in audio_data[:20]:
+                print("[DEBUG] Audio data is already in WAV format")
+                return audio_data
+            
+            sample_rate = 16000
+            bits_per_sample = 16
+            channels = 1
+            
+            if len(audio_data) > 44:  # Minimum size for meaningful audio
+                print("[DEBUG] Converting raw audio data to WAV format")
+                
+                wav_header = bytearray()
+                wav_header.extend(b'RIFF')  # ChunkID
+                wav_header.extend((len(audio_data) + 36).to_bytes(4, 'little'))  # ChunkSize
+                wav_header.extend(b'WAVE')  # Format
+                wav_header.extend(b'fmt ')  # Subchunk1ID
+                wav_header.extend((16).to_bytes(4, 'little'))  # Subchunk1Size
+                wav_header.extend((1).to_bytes(2, 'little'))  # AudioFormat (PCM)
+                wav_header.extend(channels.to_bytes(2, 'little'))  # NumChannels
+                wav_header.extend(sample_rate.to_bytes(4, 'little'))  # SampleRate
+                wav_header.extend((sample_rate * channels * bits_per_sample // 8).to_bytes(4, 'little'))  # ByteRate
+                wav_header.extend((channels * bits_per_sample // 8).to_bytes(2, 'little'))  # BlockAlign
+                wav_header.extend(bits_per_sample.to_bytes(2, 'little'))  # BitsPerSample
+                wav_header.extend(b'data')  # Subchunk2ID
+                wav_header.extend(len(audio_data).to_bytes(4, 'little'))  # Subchunk2Size
+                
+                return bytes(wav_header) + audio_data
+            else:
+                print("[DEBUG] Audio data too small for conversion, returning as-is")
+                return audio_data
+                
+        except Exception as e:
+            print(f"[DEBUG] Error converting audio to WAV: {e}")
+            print("[DEBUG] Returning original audio data")
+            return audio_data
     
     async def measure_deepl_latency(self, text: str, source_lang: str, target_lang: str) -> tuple:
         start_time = time.time()
