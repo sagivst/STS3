@@ -4,7 +4,7 @@
 set -e
 
 echo "🚀 Starting STS3 Quick Azure Deployment..."
-echo "📍 Target Region: Israel Central"
+echo "📍 Target Region: Germany West Central"
 echo "💰 Budget: Free Tier ($200 limit)"
 echo "⚡ Performance: Zero Latency Optimized"
 echo "🖥️  VM Configuration: Standard_B2s (2 vCPU, 4GB RAM, 32GB SSD)"
@@ -65,7 +65,7 @@ echo
 echo "🔧 VM Configuration:"
 echo "   Size: Standard_B2s (2 vCPUs, 4GB RAM)"
 echo "   Storage: 32GB Premium SSD"
-echo "   Region: Israel Central"
+echo "   Region: Germany West Central"
 echo "   OS: Ubuntu 22.04 LTS"
 echo "   Network: Accelerated networking enabled"
 echo "   Performance: Burstable up to 200% CPU"

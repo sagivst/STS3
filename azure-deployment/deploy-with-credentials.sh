@@ -4,7 +4,7 @@
 set -e
 
 RESOURCE_GROUP="sts3-dev-rg-$(date +%s)"
-LOCATION="israelcentral"
+LOCATION="germanywestcentral"
 DEPLOYMENT_NAME="sts3-deployment-$(date +%s)"
 TEMPLATE_FILE="deploy.bicep"
 SSH_KEY_PATH="$HOME/.ssh/id_rsa.pub"

@@ -1,5 +1,5 @@
 @description('Location for all resources')
-param location string = 'israelcentral'
+param location string = 'germanywestcentral'
 
 @description('Name prefix for all resources')
 param namePrefix string = 'sts3'
