@@ -23,8 +23,8 @@ function App() {
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
   
-  const VAD_THRESHOLD = 30 // Audio level threshold for voice detection
-  const VAD_SILENCE_DURATION = 1500 // ms of silence before stopping recording
+  const VAD_THRESHOLD = 15 // Audio level threshold for voice detection (reduced from 30)
+  const VAD_SILENCE_DURATION = 2500 // ms of silence before stopping recording (increased from 1500)
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics>({
@@ -353,28 +353,10 @@ function App() {
 
   const startRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
-      mediaRecorderRef.current.start()
+      mediaRecorderRef.current.start(1000) // Record in 1-second chunks instead of fragmenting
       setIsRecording(true)
       console.log('[DEBUG] Voice detected - starting recording')
       
-      const recordingInterval = setInterval(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          mediaRecorderRef.current.stop()
-          setTimeout(() => {
-            if (mediaRecorderRef.current && streamRef.current && isVoiceActive) {
-              mediaRecorderRef.current.start()
-            }
-          }, 50)
-        }
-      }, 2000)
-      
-      if (cleanupRef.current) {
-        const originalCleanup = cleanupRef.current
-        cleanupRef.current = () => {
-          clearInterval(recordingInterval)
-          originalCleanup()
-        }
-      }
     }
   }
   

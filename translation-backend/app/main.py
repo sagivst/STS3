@@ -639,7 +639,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     
                     if transcript and transcript.strip():
                         room_clients = rooms.get(room_id, [])
-                        print(f"[DEBUG] Room has {len(room_clients)} clients")
+                        print(f"[DEBUG] Room has {len(room_clients)} clients, processing transcript: '{transcript}'")
                         
                         for other_ws in room_clients:
                             if other_ws != websocket and other_ws in user_languages:
