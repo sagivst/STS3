@@ -157,7 +157,8 @@ class TranslationService:
             import traceback
             print(f"[DEBUG] Deepgram traceback: {traceback.format_exc()}")
             end_time = time.time()
-            return "", (end_time - start_time) * 1000
+            self.latency_metrics["deepgram"] = (end_time - start_time) * 1000
+            return "", self.latency_metrics["deepgram"]
     
     def _convert_to_wav(self, audio_data: bytes) -> bytes:
         """Convert raw audio data to WAV format for Deepgram compatibility"""
@@ -346,7 +347,6 @@ translation_service = TranslationService()
 @app.get("/health")
 async def health_check():
     """Health check endpoint with detailed status"""
-    translation_service = TranslationService()
     health_status = {
         "status": "healthy",
         "timestamp": time.time(),
