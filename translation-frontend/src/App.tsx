@@ -242,7 +242,7 @@ function App() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
       mediaRecorderRef.current.start()
       setIsRecording(true)
-      console.log('[DEBUG] Voice detected - starting recording')
+      console.log('[DEBUG] Voice detected - starting recording, audio level:', audioLevel)
     }
   }
   
@@ -250,7 +250,7 @@ function App() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
-      console.log('[DEBUG] Silence detected - stopping recording')
+      console.log('[DEBUG] Silence detected - stopping recording, audio level:', audioLevel)
     }
   }
 
@@ -278,6 +278,7 @@ function App() {
           clearTimeout(silenceTimeout)
           silenceTimeout = null
         }
+        console.log('[DEBUG] Voice activity detected, level:', normalizedLevel, 'threshold:', VAD_THRESHOLD)
         startRecording()
       } else if (!isCurrentlyActive && isRecording) {
         if (silenceTimeout) {
@@ -285,6 +286,7 @@ function App() {
         }
         silenceTimeout = setTimeout(() => {
           if (audioLevel <= VAD_THRESHOLD) {
+            console.log('[DEBUG] Silence timeout triggered, stopping recording')
             stopRecording()
           }
         }, VAD_SILENCE_DURATION)
@@ -517,6 +519,7 @@ function App() {
 
   useEffect(() => {
     if (isConnected) {
+      console.log('[DEBUG] User connected to room, starting continuous audio capture automatically')
       startContinuousAudioCapture()
     }
   }, [isConnected])
@@ -571,12 +574,13 @@ function App() {
           const audioBlob = new Blob(audioChunks, { type: actualMimeType })
           const arrayBuffer = await audioBlob.arrayBuffer()
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-          console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType)
+          console.log('[DEBUG] Sending audio_data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType, 'language:', userLanguage)
           
           wsRef.current?.send(JSON.stringify({
             type: 'audio_data',
             audio: base64,
-            mimeType: actualMimeType
+            mimeType: actualMimeType,
+            language: userLanguage
           }))
         } else {
           console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
@@ -584,7 +588,7 @@ function App() {
         audioChunks.length = 0
       }
       
-      console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
+      console.log('[DEBUG] MediaRecorder ready, waiting for voice activity. VAD threshold:', VAD_THRESHOLD, 'silence duration:', VAD_SILENCE_DURATION)
       setTranscript('Recording initialized. Speak to see transcription...')
       
       const cleanup = monitorAudioLevel()
