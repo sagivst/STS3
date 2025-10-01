@@ -17,9 +17,14 @@ function App() {
   const [roomId, setRoomId] = useState('default-room')
   const [userLanguage, setUserLanguage] = useState('en')
   const [isConnected, setIsConnected] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [isVoiceActive, setIsVoiceActive] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
+  
+  const VAD_THRESHOLD = 30
+  const VAD_SILENCE_DURATION = 1500
   
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
@@ -38,6 +43,7 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
 
@@ -203,6 +209,9 @@ function App() {
 
 
   const stopAudioCapture = () => {
+    setIsRecording(false)
+    setIsVoiceActive(false)
+    
     if (mediaRecorderRef.current) {
       if (mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop()
@@ -225,7 +234,75 @@ function App() {
       audioContextRef.current = null
     }
     
+    analyserRef.current = null
     setAudioLevel(0)
+  }
+
+  const startRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
+      mediaRecorderRef.current.start()
+      setIsRecording(true)
+      console.log('[DEBUG] Voice detected - starting recording')
+    }
+  }
+  
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+      setIsRecording(false)
+      console.log('[DEBUG] Silence detected - stopping recording')
+    }
+  }
+
+  const monitorAudioLevel = (): (() => void) | null => {
+    if (!analyserRef.current) return null
+    
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+    let animationId: number | null = null
+    let silenceTimeout: number | null = null
+    
+    const updateLevel = () => {
+      if (!analyserRef.current) return
+      
+      analyserRef.current.getByteFrequencyData(dataArray)
+      const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
+      const normalizedLevel = Math.min(100, (average / 255) * 100)
+      
+      setAudioLevel(normalizedLevel)
+      
+      const isCurrentlyActive = normalizedLevel > VAD_THRESHOLD
+      setIsVoiceActive(isCurrentlyActive)
+      
+      if (isCurrentlyActive && !isRecording) {
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout)
+          silenceTimeout = null
+        }
+        startRecording()
+      } else if (!isCurrentlyActive && isRecording) {
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout)
+        }
+        silenceTimeout = setTimeout(() => {
+          if (audioLevel <= VAD_THRESHOLD) {
+            stopRecording()
+          }
+        }, VAD_SILENCE_DURATION)
+      }
+      
+      animationId = requestAnimationFrame(updateLevel)
+    }
+    
+    updateLevel()
+    
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId)
+      }
+      if (silenceTimeout) {
+        clearTimeout(silenceTimeout)
+      }
+    }
   }
 
 
@@ -438,6 +515,98 @@ function App() {
     return () => clearInterval(interval)
   }, [isConnected])
 
+  useEffect(() => {
+    const startContinuousAudioCapture = async () => {
+      if (!isConnected || !wsRef.current) return
+      
+      try {
+        console.log('[DEBUG] Starting continuous audio capture')
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 16000
+          }
+        })
+        
+        streamRef.current = stream
+        
+        const audioContext = new AudioContext({ sampleRate: 16000 })
+        audioContextRef.current = audioContext
+        
+        const source = audioContext.createMediaStreamSource(stream)
+        const analyser = audioContext.createAnalyser()
+        analyser.fftSize = 256
+        analyser.smoothingTimeConstant = 0.8
+        source.connect(analyser)
+        analyserRef.current = analyser
+        
+        let mimeType = 'audio/webm;codecs=opus'
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
+          mimeType = 'audio/webm'
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
+            mimeType = 'audio/mp4'
+          }
+        }
+        console.log('[DEBUG] Selected mimeType for continuous capture:', mimeType)
+        
+        const mediaRecorder = new MediaRecorder(stream, { mimeType })
+        mediaRecorderRef.current = mediaRecorder
+        const audioChunks: Blob[] = []
+        
+        mediaRecorder.ondataavailable = (event) => {
+          audioChunks.push(event.data)
+        }
+        
+        mediaRecorder.onstop = async () => {
+          if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+            const actualMimeType = mediaRecorder.mimeType
+            const audioBlob = new Blob(audioChunks, { type: actualMimeType })
+            const arrayBuffer = await audioBlob.arrayBuffer()
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+            console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType)
+            
+            wsRef.current?.send(JSON.stringify({
+              type: 'audio_data',
+              audio: base64,
+              mimeType: actualMimeType
+            }))
+          } else {
+            console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
+          }
+          audioChunks.length = 0
+        }
+        
+        console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
+        setTranscript('Recording initialized. Speak to see transcription...')
+        
+        const cleanup = monitorAudioLevel()
+        
+        if (!cleanupRef.current) {
+          cleanupRef.current = () => {}
+        }
+        const originalCleanup = cleanupRef.current
+        cleanupRef.current = () => {
+          if (cleanup) cleanup()
+          originalCleanup()
+        }
+        
+      } catch (error) {
+        console.error('Error starting continuous audio capture:', error)
+        setTranscript('Microphone access failed. Please allow microphone access and refresh.')
+      }
+    }
+    
+    if (isConnected) {
+      startContinuousAudioCapture()
+    }
+    
+    return () => {
+    }
+  }, [isConnected])
+
   const getTotalLatency = () => {
     return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
   }
@@ -586,8 +755,8 @@ function App() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Audio Level</span>
-                  <Badge variant="secondary">
-                    Inactive
+                  <Badge variant={isVoiceActive ? "default" : "secondary"}>
+                    {isVoiceActive ? "Recording" : "Inactive"}
                   </Badge>
                 </div>
                 <Progress value={audioLevel} className="h-3" />
