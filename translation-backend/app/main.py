@@ -751,6 +751,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 
                 if "audio" in message:
                     audio_data = base64.b64decode(message["audio"])
+                    mime_type = message.get("mimeType", "unknown")
                     user_lang = user_languages[websocket]["language"]
                     print(f"[DEBUG] STT Test - User language: {user_lang}, audio data size: {len(audio_data)} bytes, chained: {chained_test}")
                     
