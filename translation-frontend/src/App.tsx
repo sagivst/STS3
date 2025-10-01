@@ -270,7 +270,7 @@ function App() {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({
               type: 'audio_data',
-              audio_data: base64Audio,
+              audio: base64Audio,
               language: userLanguage
             }))
           }
