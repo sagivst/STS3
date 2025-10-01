@@ -17,14 +17,10 @@ function App() {
   const [roomId, setRoomId] = useState('default-room')
   const [userLanguage, setUserLanguage] = useState('en')
   const [isConnected, setIsConnected] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
-  const [isVoiceActive, setIsVoiceActive] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
   
-  const VAD_THRESHOLD = 20 // Audio level threshold for voice detection (increased from 15)
-  const VAD_SILENCE_DURATION = 3000 // ms of silence before stopping recording (increased from 2500)
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics>({
@@ -42,7 +38,6 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
 
@@ -161,7 +156,6 @@ function App() {
         ws.onclose = (event) => {
           console.log('[DEBUG] WebSocket connection closed, code:', event.code, 'reason:', event.reason)
           setIsConnected(false)
-          setIsRecording(false)
           
           if (event.code !== 1000 && event.code !== 1001 && retryCount < maxRetries) {
             retryCount++
@@ -204,143 +198,11 @@ function App() {
     }
     stopAudioCapture()
     setIsConnected(false)
-    setIsRecording(false)
     setTranscript('')
   }
 
-  const startAudioCapture = async () => {
-    try {
-      console.log('[DEBUG] Starting audio capture...')
-      console.log('[DEBUG] Checking navigator.mediaDevices availability:', !!navigator.mediaDevices)
-      
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error('[DEBUG] getUserMedia not supported')
-        return
-      }
-      
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices()
-        const audioInputs = devices.filter(device => device.kind === 'audioinput')
-        console.log('[DEBUG] Available audio input devices:', audioInputs.length)
-        audioInputs.forEach((device, index) => {
-          console.log(`[DEBUG] Device ${index}: ${device.label || 'Unknown'} (${device.deviceId})`)
-        })
-      } catch (deviceError) {
-        console.error('[DEBUG] Failed to enumerate devices:', deviceError)
-      }
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      })
-      console.log('[DEBUG] Audio stream obtained, tracks:', stream.getTracks().length)
-      console.log('[DEBUG] Audio track state:', stream.getTracks()[0]?.readyState)
-      streamRef.current = stream
-      
-      const audioContext = new AudioContext()
-      const analyser = audioContext.createAnalyser()
-      const source = audioContext.createMediaStreamSource(stream)
-      
-      analyser.fftSize = 256
-      source.connect(analyser)
-      
-      audioContextRef.current = audioContext
-      analyserRef.current = analyser
-      
-      let mimeType = 'audio/webm;codecs=opus'
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
-        mimeType = 'audio/webm'
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
-          mimeType = 'audio/mp4'
-        }
-      }
-      console.log('[DEBUG] Selected mimeType for MediaRecorder:', mimeType)
-      
-      const mediaRecorder = new MediaRecorder(stream, { mimeType })
-      console.log('[DEBUG] MediaRecorder created with mimeType:', mediaRecorder.mimeType)
-      mediaRecorderRef.current = mediaRecorder
-      
-      const audioChunks: Blob[] = []
-      
-      mediaRecorder.ondataavailable = (event) => {
-        console.log('[DEBUG] MediaRecorder data available, size:', event.data.size)
-        if (event.data.size > 0) {
-          console.log('[DEBUG] Processing audio data for WebSocket transmission')
-          audioChunks.push(event.data)
-        } else {
-          console.log('[DEBUG] Skipping empty audio data')
-        }
-      }
-      
-      mediaRecorder.onstop = async () => {
-        console.log('[DEBUG] MediaRecorder stopped, chunks:', audioChunks.length)
-        if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          const actualMimeType = mediaRecorder.mimeType
-          const audioBlob = new Blob(audioChunks, { type: actualMimeType })
-          const arrayBuffer = await audioBlob.arrayBuffer()
-          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-          console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType)
-          
-          wsRef.current?.send(JSON.stringify({
-            type: 'audio_data',
-            audio: base64,
-            mimeType: actualMimeType
-          }))
-        } else {
-          console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
-        }
-        audioChunks.length = 0
-      }
-      
-      console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
-      setIsRecording(true)
-      setTranscript('Recording initialized. Speak to see transcription...')
-      
-      const cleanup = monitorAudioLevel()
-      
-      if (!cleanupRef.current) {
-        cleanupRef.current = () => {}
-      }
-      const originalCleanup = cleanupRef.current
-      cleanupRef.current = () => {
-        if (cleanup) cleanup()
-        originalCleanup()
-      }
-    } catch (error) {
-      console.error('[DEBUG] Error accessing microphone:', error)
-      if (error instanceof Error) {
-        console.error('[DEBUG] Error type:', error.constructor.name)
-        console.error('[DEBUG] Error message:', error.message)
-        
-        if (error.name === 'NotAllowedError') {
-          setTranscript('Microphone access denied. Please grant permission and try again.')
-        } else if (error.name === 'NotFoundError') {
-          setTranscript('No microphone found. Please connect a microphone and try again.')
-        } else {
-          setTranscript(`Microphone error: ${error.message}`)
-        }
-      }
-      
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        const fallbackMessage = "Testing transcription pipeline - microphone access failed";
-        wsRef.current.send(JSON.stringify({
-          type: 'test_transcription_fallback',
-          text: fallbackMessage,
-          language: userLanguage
-        }));
-        setTranscript(`Fallback mode: "${fallbackMessage}" (microphone access failed)`);
-      }
-    }
-  }
 
   const stopAudioCapture = () => {
-    setIsRecording(false)
-    
     if (mediaRecorderRef.current) {
       if (mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop()
@@ -366,72 +228,7 @@ function App() {
     setAudioLevel(0)
   }
 
-  const startRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
-      mediaRecorderRef.current.start()
-      setIsRecording(true)
-      console.log('[DEBUG] Voice detected - starting recording')
-      
-    }
-  }
-  
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop()
-      setIsRecording(false)
-      console.log('[DEBUG] Silence detected - stopping recording')
-    }
-  }
 
-  const monitorAudioLevel = (): (() => void) | null => {
-    if (!analyserRef.current) return null
-    
-    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
-    let animationId: number
-    let silenceTimeout: NodeJS.Timeout | null = null
-    
-    const updateLevel = () => {
-      if (!analyserRef.current) return
-      
-      analyserRef.current.getByteFrequencyData(dataArray)
-      const average = dataArray.reduce((a, b) => a + b) / dataArray.length
-      const level = Math.min(100, (average / 128) * 100)
-      setAudioLevel(level)
-      
-      const isCurrentlyActive = level > VAD_THRESHOLD
-      setIsVoiceActive(isCurrentlyActive)
-      
-      if (isCurrentlyActive && !isRecording) {
-        if (silenceTimeout) {
-          clearTimeout(silenceTimeout)
-          silenceTimeout = null
-        }
-        startRecording()
-      } else if (!isCurrentlyActive && isRecording) {
-        if (silenceTimeout) {
-          clearTimeout(silenceTimeout)
-        }
-        silenceTimeout = setTimeout(() => {
-          if (audioLevel <= VAD_THRESHOLD) {
-            stopRecording()
-          }
-        }, VAD_SILENCE_DURATION)
-      }
-      
-      animationId = requestAnimationFrame(updateLevel)
-    }
-    
-    updateLevel()
-    
-    return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId)
-      }
-      if (silenceTimeout) {
-        clearTimeout(silenceTimeout)
-      }
-    }
-  }
 
   const playTranslatedAudio = async (hexAudio: string) => {
     console.log('[DEBUG] playTranslatedAudio called with hex length:', hexAudio?.length || 0)
@@ -553,9 +350,13 @@ function App() {
       
     } catch (error) {
       console.error('Error testing Deepgram STT:', error)
-      const totalTime = Date.now() - startTime
-      setTranscript(`Error: Could not access microphone (${totalTime}ms)`)
-      setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
+      setTranscript(`Microphone access failed, testing with synthetic audio...`)
+      
+      wsRef.current?.send(JSON.stringify({
+        type: "test_deepgram_stt",
+        test_start_time: startTime,
+        chained_test: true
+      }))
     }
   }
 
@@ -739,23 +540,6 @@ function App() {
               </Button>
             </div>
             
-            {isConnected && !isRecording && (
-              <div className="mt-4 text-center">
-                <Button 
-                  onClick={startAudioCapture}
-                  variant="default"
-                  size="lg"
-                  className="flex items-center gap-2"
-                >
-                  <Mic className="h-5 w-5" />
-                  Start Recording for Real-Time Translation
-                </Button>
-                <p className="text-sm text-gray-600 mt-2">
-                  Click to grant microphone permission and enable real-time transcription
-                </p>
-              </div>
-            )}
-            
             {isConnected && (
               <div className="mt-4 space-y-3">
                 <h3 className="text-sm font-medium text-gray-700">Individual Service Tests</h3>
@@ -802,8 +586,8 @@ function App() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Audio Level</span>
-                  <Badge variant={isVoiceActive ? "default" : "secondary"}>
-                    {isVoiceActive ? "Recording" : "Inactive"}
+                  <Badge variant="secondary">
+                    Inactive
                   </Badge>
                 </div>
                 <Progress value={audioLevel} className="h-3" />
