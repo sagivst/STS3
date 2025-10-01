@@ -760,34 +760,29 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     )
                     print(f"[DEBUG] STT Test - Deepgram transcript: '{transcript}', latency: {deepgram_latency}ms")
                 else:
-                    print(f"[DEBUG] STT Test - Using synthetic test audio for latency measurement")
+                    print(f"[DEBUG] STT Test - Using synthetic speech audio for latency measurement")
                     user_lang = user_languages[websocket]["language"]
                     
-                    import io
-                    import wave
-                    import struct
+                    test_text = "Hello, this is a test of the speech transcription system."
+                    voice_map = {
+                        "en": "en-US-JennyNeural",
+                        "ja": "ja-JP-NanamiNeural",
+                        "es": "es-ES-ElviraNeural",
+                        "fr": "fr-FR-DeniseNeural",
+                        "de": "de-DE-KatjaNeural",
+                        "zh": "zh-CN-XiaoxiaoNeural"
+                    }
                     
-                    sample_rate = 16000
-                    duration = 1.0  # 1 second
-                    frequency = 440  # A4 note
-                    
-                    wav_buffer = io.BytesIO()
-                    with wave.open(wav_buffer, 'wb') as wav_file:
-                        wav_file.setnchannels(1)  # Mono
-                        wav_file.setsampwidth(2)  # 16-bit
-                        wav_file.setframerate(sample_rate)
-                        
-                        for i in range(int(sample_rate * duration)):
-                            value = int(16384 * 0.1)  # Low volume tone
-                            wav_file.writeframes(struct.pack('<h', value))
-                    
-                    test_audio = wav_buffer.getvalue()
-                    print(f"[DEBUG] Generated test audio: {len(test_audio)} bytes")
+                    print(f"[DEBUG] Generating synthetic speech: '{test_text}' in {user_lang}")
+                    test_audio, _ = await translation_service.measure_azure_tts_latency(
+                        test_text, user_lang, voice_map.get(user_lang, "en-US-JennyNeural")
+                    )
+                    print(f"[DEBUG] Generated synthetic speech audio: {len(test_audio)} bytes")
                     
                     transcript, deepgram_latency = await translation_service.measure_deepgram_latency(
                         test_audio, user_lang
                     )
-                    print(f"[DEBUG] STT Test - Synthetic audio transcript: '{transcript}', latency: {deepgram_latency}ms")
+                    print(f"[DEBUG] STT Test - Synthetic speech transcript: '{transcript}', latency: {deepgram_latency}ms")
                 
                 total_time = time.time() * 1000 - test_start_time
                 
