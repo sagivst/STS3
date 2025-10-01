@@ -516,102 +516,117 @@ function App() {
   }, [isConnected])
 
   useEffect(() => {
-    const startContinuousAudioCapture = async () => {
-      if (!isConnected || !wsRef.current) return
+    if (isConnected) {
+      startContinuousAudioCapture()
+    }
+  }, [isConnected])
+
+  const startContinuousAudioCapture = async () => {
+    if (!isConnected || !wsRef.current) return
+    
+    try {
+      console.log('[DEBUG] Starting continuous audio capture')
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
       
-      try {
-        console.log('[DEBUG] Starting continuous audio capture')
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 16000
-          }
-        })
-        
-        streamRef.current = stream
-        
-        const audioContext = new AudioContext({ sampleRate: 16000 })
-        audioContextRef.current = audioContext
-        
-        const source = audioContext.createMediaStreamSource(stream)
-        const analyser = audioContext.createAnalyser()
-        analyser.fftSize = 256
-        analyser.smoothingTimeConstant = 0.8
-        source.connect(analyser)
-        analyserRef.current = analyser
-        
-        let mimeType = 'audio/webm;codecs=opus'
+      streamRef.current = stream
+      
+      const audioContext = new AudioContext()
+      audioContextRef.current = audioContext
+      
+      const source = audioContext.createMediaStreamSource(stream)
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.8
+      source.connect(analyser)
+      analyserRef.current = analyser
+      
+      let mimeType = 'audio/webm;codecs=opus'
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
+        mimeType = 'audio/webm'
         if (!MediaRecorder.isTypeSupported(mimeType)) {
-          console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
-          mimeType = 'audio/webm'
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
-            mimeType = 'audio/mp4'
-          }
+          console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
+          mimeType = 'audio/mp4'
         }
-        console.log('[DEBUG] Selected mimeType for continuous capture:', mimeType)
-        
-        const mediaRecorder = new MediaRecorder(stream, { mimeType })
-        mediaRecorderRef.current = mediaRecorder
-        const audioChunks: Blob[] = []
-        
-        mediaRecorder.ondataavailable = (event) => {
-          audioChunks.push(event.data)
+      }
+      console.log('[DEBUG] Selected mimeType for continuous capture:', mimeType)
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType })
+      mediaRecorderRef.current = mediaRecorder
+      const audioChunks: Blob[] = []
+      
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data)
+      }
+      
+      mediaRecorder.onstop = async () => {
+        if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          const actualMimeType = mediaRecorder.mimeType
+          const audioBlob = new Blob(audioChunks, { type: actualMimeType })
+          const arrayBuffer = await audioBlob.arrayBuffer()
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+          console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType)
+          
+          wsRef.current?.send(JSON.stringify({
+            type: 'audio_data',
+            audio: base64,
+            mimeType: actualMimeType
+          }))
+        } else {
+          console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
         }
-        
-        mediaRecorder.onstop = async () => {
-          if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-            const actualMimeType = mediaRecorder.mimeType
-            const audioBlob = new Blob(audioChunks, { type: actualMimeType })
-            const arrayBuffer = await audioBlob.arrayBuffer()
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-            console.log('[DEBUG] Sending audio data to backend, base64 length:', base64.length, 'mimeType:', actualMimeType)
-            
-            wsRef.current?.send(JSON.stringify({
-              type: 'audio_data',
-              audio: base64,
-              mimeType: actualMimeType
-            }))
-          } else {
-            console.log('[DEBUG] Skipping audio send - chunks:', audioChunks.length, 'ws state:', wsRef.current?.readyState)
-          }
-          audioChunks.length = 0
-        }
-        
-        console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
-        setTranscript('Recording initialized. Speak to see transcription...')
-        
-        const cleanup = monitorAudioLevel()
-        
-        if (!cleanupRef.current) {
-          cleanupRef.current = () => {}
-        }
-        const originalCleanup = cleanupRef.current
-        cleanupRef.current = () => {
-          if (cleanup) cleanup()
-          originalCleanup()
-        }
-        
-      } catch (error) {
-        console.error('Error starting continuous audio capture:', error)
-        setTranscript('Microphone access failed, testing with synthetic audio...')
-        
-        wsRef.current?.send(JSON.stringify({
+        audioChunks.length = 0
+      }
+      
+      console.log('[DEBUG] MediaRecorder ready, waiting for voice activity')
+      setTranscript('Recording initialized. Speak to see transcription...')
+      
+      const cleanup = monitorAudioLevel()
+      
+      if (!cleanupRef.current) {
+        cleanupRef.current = () => {}
+      }
+      const originalCleanup = cleanupRef.current
+      cleanupRef.current = () => {
+        if (cleanup) cleanup()
+        originalCleanup()
+      }
+      
+    } catch (error) {
+      console.error('Error starting continuous audio capture:', error)
+      setTranscript('Microphone access failed, testing with synthetic audio...')
+      
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        console.log('[DEBUG] Sending fallback test_deepgram_stt message')
+        wsRef.current.send(JSON.stringify({
           type: "test_deepgram_stt",
           test_start_time: Date.now(),
           chained_test: false
         }))
+      } else {
+        console.log('[DEBUG] WebSocket not ready, retrying fallback in 1 second')
+        setTimeout(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            console.log('[DEBUG] Sending delayed fallback test_deepgram_stt message')
+            wsRef.current.send(JSON.stringify({
+              type: "test_deepgram_stt",
+              test_start_time: Date.now(),
+              chained_test: false
+            }))
+          } else {
+            console.error('[DEBUG] WebSocket still not ready after retry')
+            setTranscript('Microphone access failed and WebSocket not ready for fallback test.')
+          }
+        }, 1000)
       }
     }
-    
-    if (isConnected) {
-      startContinuousAudioCapture()
-    }
-    
-    return () => {
-    }
-  }, [isConnected])
+  }
 
   const getTotalLatency = () => {
     return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
