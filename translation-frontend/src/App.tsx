@@ -595,7 +595,13 @@ function App() {
         
       } catch (error) {
         console.error('Error starting continuous audio capture:', error)
-        setTranscript('Microphone access failed. Please allow microphone access and refresh.')
+        setTranscript('Microphone access failed, testing with synthetic audio...')
+        
+        wsRef.current?.send(JSON.stringify({
+          type: "test_deepgram_stt",
+          test_start_time: Date.now(),
+          chained_test: false
+        }))
       }
     }
     
