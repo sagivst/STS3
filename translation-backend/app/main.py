@@ -592,13 +592,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
                 for client in room_users:
                     try:
-                        await client.send_text(json.dumps({
-                            "type": "room_status",
-                            "connected_users": len(room_users),
-                            "user_languages": user_langs
-                        }))
-                    except:
-                        pass
+                        if client.client_state.value == 1:
+                            await client.send_text(json.dumps({
+                                "type": "room_status",
+                                "connected_users": len(room_users),
+                                "user_languages": user_langs
+                            }))
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to send room status to client: {e}")
+                        if client in rooms.get(room_id, []):
+                            rooms[room_id].remove(client)
+                        if client in user_languages:
+                            del user_languages[client]
             
             elif message["type"] == "audio_data":
                 print(f"[DEBUG] Received audio_data message")
@@ -671,13 +676,23 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                             hex_audio = audio_output.hex()
                                             print(f"[DEBUG] Sending translated audio to other user, hex length: {len(hex_audio)}")
                                             
-                                            await other_ws.send_text(json.dumps({
-                                                "type": "translated_audio",
-                                                "audio": hex_audio,
-                                                "original_text": transcript,
-                                                "translated_text": translated_text
-                                            }))
-                                            print(f"[DEBUG] Sent translated audio to other user")
+                                            try:
+                                                if other_ws.client_state.value == 1:
+                                                    await other_ws.send_text(json.dumps({
+                                                        "type": "translated_audio",
+                                                        "audio": hex_audio,
+                                                        "original_text": transcript,
+                                                        "translated_text": translated_text
+                                                    }))
+                                                    print(f"[DEBUG] Sent translated audio to other user")
+                                                else:
+                                                    print(f"[DEBUG] Skipping disconnected client for translated audio")
+                                            except Exception as send_error:
+                                                print(f"[DEBUG] Failed to send translated audio to client: {send_error}")
+                                                if other_ws in rooms.get(room_id, []):
+                                                    rooms[room_id].remove(other_ws)
+                                                if other_ws in user_languages:
+                                                    del user_languages[other_ws]
                 except Exception as e:
                     print(f"[DEBUG] ERROR in audio_data processing: {e}")
                     print(f"[DEBUG] Exception type: {type(e).__name__}")
@@ -882,10 +897,14 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                     fallback_text, user_lang, other_lang
                                 )
                                 if translated_text:
-                                    await other_ws.send_text(json.dumps({
-                                        "type": "transcript",
-                                        "text": f"[Translated] {translated_text}"
-                                    }))
+                                    try:
+                                        if other_ws.client_state.value == 1:
+                                            await other_ws.send_text(json.dumps({
+                                                "type": "transcript",
+                                                "text": f"[Translated] {translated_text}"
+                                            }))
+                                    except Exception as e:
+                                        print(f"[DEBUG] Failed to send translated transcript: {e}")
     
     except WebSocketDisconnect:
         if room_id in rooms:
@@ -896,13 +915,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
                 for client in room_users:
                     try:
-                        await client.send_text(json.dumps({
-                            "type": "room_status",
-                            "connected_users": len(room_users),
-                            "user_languages": user_langs
-                        }))
-                    except:
-                        pass
+                        if client.client_state.value == 1:
+                            await client.send_text(json.dumps({
+                                "type": "room_status",
+                                "connected_users": len(room_users),
+                                "user_languages": user_langs
+                            }))
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to send room status to client: {e}")
+                        if client in rooms.get(room_id, []):
+                            rooms[room_id].remove(client)
+                        if client in user_languages:
+                            del user_languages[client]
             else:
                 del rooms[room_id]
         
