@@ -370,22 +370,39 @@ class TranslationService:
             deepl_target = deepl_target_map.get(target_lang, target_lang.upper())
             
             print(f"[DEBUG] DeepL translation: '{text}' from {source_lang} ({deepl_source}) to {target_lang} ({deepl_target})")
-            result = deepl_translator.translate_text(
-                text, 
-                source_lang=deepl_source, 
-                target_lang=deepl_target
-            )
-            end_time = time.time()
-            self.latency_metrics["deepl"] = (end_time - start_time) * 1000
-            print(f"[DEBUG] DeepL result: '{result.text}', latency: {self.latency_metrics['deepl']}ms")
             
-            return result.text, self.latency_metrics["deepl"]
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = await asyncio.to_thread(
+                        deepl_translator.translate_text,
+                        text, 
+                        source_lang=deepl_source, 
+                        target_lang=deepl_target
+                    )
+                    
+                    end_time = time.time()
+                    self.latency_metrics["deepl"] = (end_time - start_time) * 1000
+                    print(f"[DEBUG] DeepL result: '{result.text}', latency: {self.latency_metrics['deepl']}ms")
+                    
+                    return result.text, self.latency_metrics["deepl"]
+                    
+                except Exception as retry_error:
+                    print(f"[WARNING] DeepL translation attempt {attempt + 1} failed: {retry_error}")
+                    print(f"[DEBUG] Failed translation details - Text: '{text}', Source: {source_lang} ({deepl_source}), Target: {target_lang} ({deepl_target})")
+                    if attempt == max_retries - 1:
+                        raise
+                    await asyncio.sleep(0.5)  # Brief delay before retry
+                    
         except Exception as e:
-            print(f"[DEBUG] DeepL error: {e}")
+            print(f"[ERROR] DeepL translation failed after all retries: {e}")
             print(f"[DEBUG] DeepL error type: {type(e)}")
+            print(f"[DEBUG] Final failed translation details - Text: '{text}', Source: {source_lang}, Target: {target_lang}")
             import traceback
             print(f"[DEBUG] DeepL traceback: {traceback.format_exc()}")
-            return text, 0
+            end_time = time.time()
+            self.latency_metrics["deepl"] = (end_time - start_time) * 1000
+            return text, self.latency_metrics["deepl"]  # Return original text on error
     
     async def measure_azure_tts_latency(self, text: str, language: str, voice: str) -> tuple:
         start_time = time.time()
@@ -573,12 +590,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 continue
             
             if message_type == "language_config":
+                old_language = user_languages.get(websocket, {}).get("language", None)
+                
                 user_languages[websocket] = {
                     "language": message["language"]
                 }
+                
+                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}")
+                
                 await websocket.send_text(json.dumps({
                     "type": "language_config_updated",
-                    "language": message["language"]
+                    "language": message["language"],
+                    "previous_language": old_language
                 }))
                 
                 room_users = rooms.get(room_id, [])
@@ -670,22 +693,21 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                             print(f"[DEBUG] Sending translated audio to other user, hex length: {len(hex_audio)}")
                                             
                                             try:
-                                                if other_ws.client_state.value == 1:
+                                                if other_ws.client_state.value == 1:  # CONNECTED state
                                                     await other_ws.send_text(json.dumps({
                                                         "type": "translated_audio",
                                                         "audio": hex_audio,
                                                         "original_text": transcript,
-                                                        "translated_text": translated_text
+                                                        "translated_text": translated_text,
+                                                        "original_language": user_lang,
+                                                        "translated_language": other_lang
                                                     }))
-                                                    print(f"[DEBUG] Sent translated audio to other user")
+                                                    print(f"[DEBUG] Sent translated audio to other user ({user_lang}→{other_lang})")
                                                 else:
-                                                    print(f"[DEBUG] Skipping disconnected client for translated audio")
+                                                    print(f"[WARNING] WebSocket not in connected state, marking for cleanup")
                                             except Exception as send_error:
-                                                print(f"[DEBUG] Failed to send translated audio to client: {send_error}")
-                                                if other_ws in rooms.get(room_id, []):
-                                                    rooms[room_id].remove(other_ws)
-                                                if other_ws in user_languages:
-                                                    del user_languages[other_ws]
+                                                print(f"[ERROR] Failed to send translated audio to client: {send_error}")
+                                                print(f"[DEBUG] Error details - Original: {user_lang}, Target: {other_lang}, Text: '{translated_text[:50]}...'")
                 except Exception as e:
                     print(f"[DEBUG] ERROR in audio_data processing: {e}")
                     print(f"[DEBUG] Exception type: {type(e).__name__}")
@@ -900,28 +922,46 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                         print(f"[DEBUG] Failed to send translated transcript: {e}")
     
     except WebSocketDisconnect:
-        if room_id in rooms:
-            rooms[room_id].remove(websocket)
+        print(f"[INFO] WebSocket disconnected")
+    except Exception as e:
+        print(f"[ERROR] WebSocket error: {e}")
+    finally:
+        try:
+            if websocket in user_languages:
+                user_lang = user_languages[websocket].get("language", "unknown")
+                del user_languages[websocket]
+                print(f"[DEBUG] Cleaned up language config for {user_lang} client")
             
-            if rooms[room_id]:
-                room_users = rooms[room_id]
-                user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
-                for client in room_users:
-                    try:
-                        if client.client_state.value == 1:
-                            await client.send_text(json.dumps({
-                                "type": "room_status",
-                                "connected_users": len(room_users),
-                                "user_languages": user_langs
-                            }))
-                    except Exception as e:
-                        print(f"[DEBUG] Failed to send room status to client: {e}")
+            if room_id in rooms and websocket in rooms[room_id]:
+                rooms[room_id].remove(websocket)
+                print(f"[INFO] Removed client from room: {room_id}")
+                
+                if rooms[room_id]:
+                    room_users = rooms[room_id]
+                    user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
+                    clients_to_remove = []
+                    
+                    for client in room_users:
+                        try:
+                            if client.client_state.value == 1:
+                                await client.send_text(json.dumps({
+                                    "type": "room_status",
+                                    "connected_users": len(room_users),
+                                    "user_languages": user_langs
+                                }))
+                        except Exception as e:
+                            print(f"[DEBUG] Failed to send room status to client: {e}")
+                            clients_to_remove.append(client)
+                    
+                    for client in clients_to_remove:
                         if client in rooms.get(room_id, []):
                             rooms[room_id].remove(client)
                         if client in user_languages:
                             del user_languages[client]
-            else:
-                del rooms[room_id]
-        
-        if websocket in user_languages:
-            del user_languages[websocket]
+                else:
+                    del rooms[room_id]
+                    print(f"[DEBUG] Cleaned up empty room: {room_id}")
+            
+            print(f"[INFO] WebSocket connection closed and cleaned up")
+        except Exception as cleanup_error:
+            print(f"[ERROR] Error during cleanup: {cleanup_error}")
