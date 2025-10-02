@@ -22,8 +22,10 @@ function App() {
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
   
-  const VAD_THRESHOLD = 15
-  const SILENCE_DURATION = 1000
+  const VAD_THRESHOLD = 12  // Reduced from 15 for better sensitivity
+  const SILENCE_DURATION = 800  // Reduced from 1000ms for faster response
+  const PREBUFFER_DURATION = 500  // 500ms of pre-VAD audio
+  const TIMESLICE_INTERVAL = 100  // 100ms chunks for consistent timing
   
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
@@ -48,6 +50,9 @@ function App() {
   const audioStreamRef = useRef<MediaStream | null>(null)
   const isRecordingRef = useRef<boolean>(false)
   const lastVoiceTimeRef = useRef<number>(0)
+  const preBufferRef = useRef<Blob[]>([])
+  const preBufferRecorderRef = useRef<MediaRecorder | null>(null)
+  const heartbeatIntervalRef = useRef<number | null>(null)
 
   const languages = [
     { code: 'en', name: 'English' },
@@ -82,6 +87,12 @@ function App() {
             type: 'language_config',
             language: userLanguage
           }))
+          
+          heartbeatIntervalRef.current = window.setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'heartbeat' }))
+            }
+          }, 30000)
           
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -165,6 +176,11 @@ function App() {
           console.log('[DEBUG] WebSocket connection closed, code:', event.code, 'reason:', event.reason)
           setIsConnected(false)
           
+          if (heartbeatIntervalRef.current) {
+            clearInterval(heartbeatIntervalRef.current)
+            heartbeatIntervalRef.current = null
+          }
+          
           if (event.code !== 1000 && event.code !== 1001 && retryCount < maxRetries) {
             retryCount++
             console.log(`[DEBUG] Attempting to reconnect (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
@@ -204,6 +220,12 @@ function App() {
       wsRef.current.close(1000, 'User disconnected')
       wsRef.current = null
     }
+    
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current)
+      heartbeatIntervalRef.current = null
+    }
+    
     stopAudioCapture()
     setIsConnected(false)
     setTranscript('')
@@ -218,6 +240,13 @@ function App() {
         mediaRecorderRef.current.stop()
       }
       mediaRecorderRef.current = null
+    }
+    
+    if (preBufferRecorderRef.current) {
+      if (preBufferRecorderRef.current.state === 'recording') {
+        preBufferRecorderRef.current.stop()
+      }
+      preBufferRecorderRef.current = null
     }
     
     if (streamRef.current) {
@@ -236,18 +265,26 @@ function App() {
     }
     
     analyserRef.current = null
+    preBufferRef.current = []
     setAudioLevel(0)
   }
 
   const startRecording = () => {
     if (!audioStreamRef.current || isRecordingRef.current) return
     
-    console.log('[DEBUG] Starting MediaRecorder for continuous capture')
+    console.log('[DEBUG] Starting MediaRecorder for continuous capture with pre-buffer')
     const mediaRecorder = new MediaRecorder(audioStreamRef.current, {
-      mimeType: 'audio/webm;codecs=opus'
+      mimeType: 'audio/webm;codecs=opus',
+      audioBitsPerSecond: 128000
     })
     
     const audioChunks: Blob[] = []
+    
+    if (preBufferRef.current.length > 0) {
+      console.log('[DEBUG] Including', preBufferRef.current.length, 'pre-buffered chunks')
+      audioChunks.push(...preBufferRef.current)
+      preBufferRef.current = []
+    }
     
     mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
@@ -260,7 +297,7 @@ function App() {
       console.log('[DEBUG] MediaRecorder stopped, processing audio chunks')
       if (audioChunks.length > 0) {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
-        console.log('[DEBUG] Created audio blob, size:', audioBlob.size)
+        console.log('[DEBUG] Created audio blob with pre-buffer, size:', audioBlob.size)
         
         const reader = new FileReader()
         reader.onloadend = () => {
@@ -284,8 +321,8 @@ function App() {
     isRecordingRef.current = true
     setIsVoiceActive(true)
     
-    mediaRecorder.start()
-    console.log('[DEBUG] MediaRecorder started for continuous capture')
+    mediaRecorder.start(TIMESLICE_INTERVAL)
+    console.log('[DEBUG] MediaRecorder started for continuous capture with', TIMESLICE_INTERVAL, 'ms timeslice')
   }
   
   const stopRecording = () => {
@@ -297,6 +334,30 @@ function App() {
     setIsVoiceActive(false)
   }
 
+  const startPreBuffering = () => {
+    if (!audioStreamRef.current || preBufferRecorderRef.current) return
+    
+    console.log('[DEBUG] Starting pre-buffer recording')
+    const preBufferRecorder = new MediaRecorder(audioStreamRef.current, {
+      mimeType: 'audio/webm;codecs=opus',
+      audioBitsPerSecond: 128000
+    })
+    
+    preBufferRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        preBufferRef.current.push(event.data)
+        
+        const maxChunks = Math.ceil(PREBUFFER_DURATION / TIMESLICE_INTERVAL)
+        if (preBufferRef.current.length > maxChunks) {
+          preBufferRef.current = preBufferRef.current.slice(-maxChunks)
+        }
+      }
+    }
+    
+    preBufferRecorderRef.current = preBufferRecorder
+    preBufferRecorder.start(TIMESLICE_INTERVAL)
+  }
+
   const monitorAudioLevel = () => {
     if (!analyserRef.current || !audioContextRef.current) return
     
@@ -305,6 +366,11 @@ function App() {
     const dataArray = new Uint8Array(bufferLength)
     
     console.log('[DEBUG] Audio level monitoring started')
+    
+    startPreBuffering()
+    
+    let smoothedLevel = 0
+    const smoothingFactor = 0.3
     
     const checkAudioLevel = () => {
       if (!analyser || audioContextRef.current?.state === 'closed') return
@@ -316,15 +382,18 @@ function App() {
         sum += dataArray[i] * dataArray[i]
       }
       const rms = Math.sqrt(sum / bufferLength)
-      const audioLevel = Math.round((rms / 255) * 100)
+      const rawLevel = Math.round((rms / 255) * 100)
       
-      console.log(`[DEBUG] Audio level: ${audioLevel}, VAD threshold: ${VAD_THRESHOLD}, Currently recording: ${isRecordingRef.current}`)
+      smoothedLevel = smoothedLevel * (1 - smoothingFactor) + rawLevel * smoothingFactor
+      const audioLevel = Math.round(smoothedLevel)
+      
+      console.log(`[DEBUG] Audio level: ${audioLevel} (raw: ${rawLevel}), VAD threshold: ${VAD_THRESHOLD}, Currently recording: ${isRecordingRef.current}`)
       
       setAudioLevel(audioLevel)
       
       if (audioLevel > VAD_THRESHOLD) {
         if (!isRecordingRef.current) {
-          console.log('[DEBUG] Voice detected, starting recording')
+          console.log('[DEBUG] Voice detected, starting recording with pre-buffer')
           startRecording()
         }
         lastVoiceTimeRef.current = Date.now()

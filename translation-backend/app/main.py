@@ -166,27 +166,27 @@ class TranslationService:
         """Convert raw audio data to WAV format for Deepgram compatibility"""
         try:
             print(f"[DEBUG] Audio conversion - Input size: {len(audio_data)} bytes")
-            print(f"[DEBUG] Audio conversion - MIME type: {mime_type}")
-            print(f"[DEBUG] Audio conversion - First 20 bytes: {audio_data[:20].hex()}")
             
             if audio_data.startswith(b'RIFF') and b'WAVE' in audio_data[:20]:
-                print("[DEBUG] Audio data is already in WAV format")
+                print("[DEBUG] Audio data is already in WAV format - fast path")
                 return audio_data
             
             if audio_data.startswith(b'\x1a\x45\xdf\xa3'):
-                print("[DEBUG] Detected WebM format - converting to WAV for better compatibility")
+                print("[DEBUG] Detected WebM format - fast conversion")
                 try:
                     from pydub import AudioSegment
                     import io
                     
                     audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="webm")
-                    audio_segment = audio_segment.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+                    
+                    if audio_segment.channels != 1 or audio_segment.frame_rate != 16000:
+                        audio_segment = audio_segment.set_channels(1).set_frame_rate(16000).set_sample_width(2)
                     
                     wav_buffer = io.BytesIO()
                     audio_segment.export(wav_buffer, format="wav")
                     wav_data = wav_buffer.getvalue()
                     
-                    print(f"[DEBUG] Successfully converted WebM to WAV, size: {len(wav_data)} bytes")
+                    print(f"[DEBUG] Fast WebM conversion completed, size: {len(wav_data)} bytes")
                     return wav_data
                 except Exception as e:
                     print(f"[DEBUG] WebM conversion failed: {e}, using original")
@@ -204,31 +204,18 @@ class TranslationService:
                     
                     print(f"[DEBUG] Original audio - Duration: {len(audio_segment)}ms, Channels: {audio_segment.channels}, Sample Rate: {audio_segment.frame_rate}Hz")
                     
-                    if len(audio_segment) < 250:  # Less than 250ms
-                        print(f"[DEBUG] Audio too short ({len(audio_segment)}ms), likely silence or empty")
-                        
-                        sample_rate = 16000
-                        duration_ms = 1000
-                        silence = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
-                        silence = silence.set_channels(1).set_sample_width(2)
-                        
-                        wav_buffer = io.BytesIO()
-                        silence.export(wav_buffer, format="wav")
-                        return wav_buffer.getvalue()
+                    if len(audio_segment) < 100:  # Less than 100ms
+                        print(f"[DEBUG] Audio too short ({len(audio_segment)}ms), skipping")
+                        return audio_data
                     
-                    audio_segment = audio_segment.set_channels(1)
-                    audio_segment = audio_segment.set_frame_rate(16000)
-                    audio_segment = audio_segment.set_sample_width(2)
+                    if audio_segment.channels != 1 or audio_segment.frame_rate != 16000:
+                        audio_segment = audio_segment.set_channels(1).set_frame_rate(16000).set_sample_width(2)
                     
-                    if audio_segment.max_possible_amplitude > 0:
-                        normalized_audio = audio_segment.normalize()
-                        print(f"[DEBUG] Audio normalized - Max amplitude improved")
-                        audio_segment = normalized_audio
-                    
-                    print(f"[DEBUG] Converted audio - Duration: {len(audio_segment)}ms, Channels: {audio_segment.channels}, Sample Rate: {audio_segment.frame_rate}Hz")
+                    if audio_segment.max_possible_amplitude > 0 and audio_segment.rms < 1000:
+                        audio_segment = audio_segment.normalize()
                     
                     wav_buffer = io.BytesIO()
-                    audio_segment.export(wav_buffer, format="wav", parameters=["-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le"])
+                    audio_segment.export(wav_buffer, format="wav")
                     wav_data = wav_buffer.getvalue()
                     
                     print(f"[DEBUG] Successfully converted MP4 to WAV, size: {len(wav_data)} bytes")
@@ -578,8 +565,14 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            message_type = message.get('type', 'unknown')
             
-            if message["type"] == "language_config":
+            if message_type == "heartbeat":
+                if websocket.client_state.value == 1:
+                    await websocket.send_text(json.dumps({"type": "heartbeat_ack"}))
+                continue
+            
+            if message_type == "language_config":
                 user_languages[websocket] = {
                     "language": message["language"]
                 }
