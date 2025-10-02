@@ -605,21 +605,36 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 }))
                 
                 room_users = rooms.get(room_id, [])
-                user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
+                active_clients = []
+                clients_to_remove = []
+                
                 for client in room_users:
                     try:
                         if client.client_state.value == 1:
-                            await client.send_text(json.dumps({
-                                "type": "room_status",
-                                "connected_users": len(room_users),
-                                "user_languages": user_langs
-                            }))
+                            active_clients.append(client)
+                        else:
+                            clients_to_remove.append(client)
+                    except Exception as e:
+                        print(f"[DEBUG] Client state check failed: {e}")
+                        clients_to_remove.append(client)
+                
+                for client in clients_to_remove:
+                    if client in rooms.get(room_id, []):
+                        rooms[room_id].remove(client)
+                    if client in user_languages:
+                        del user_languages[client]
+                
+                user_langs = [user_languages.get(client, {}).get("language", "en") for client in active_clients]
+                
+                for client in active_clients:
+                    try:
+                        await client.send_text(json.dumps({
+                            "type": "room_status",
+                            "connected_users": len(active_clients),
+                            "user_languages": user_langs
+                        }))
                     except Exception as e:
                         print(f"[DEBUG] Failed to send room status to client: {e}")
-                        if client in rooms.get(room_id, []):
-                            rooms[room_id].remove(client)
-                        if client in user_languages:
-                            del user_languages[client]
             
             elif message["type"] == "audio_data":
                 print(f"[DEBUG] Received audio_data message")
@@ -668,10 +683,29 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                 print(f"[DEBUG] Processing for other user with language: {other_lang}")
                                 
                                 if other_lang != user_lang:
-                                    translated_text, deepl_latency = await translation_service.measure_deepl_latency(
-                                        transcript, user_lang, other_lang
-                                    )
-                                    print(f"[DEBUG] DeepL translation: '{translated_text}', latency: {deepl_latency}ms")
+                                    max_retries = 3
+                                    retry_count = 0
+                                    translated_text = None
+                                    
+                                    while retry_count < max_retries and not translated_text:
+                                        try:
+                                            translated_text, deepl_latency = await translation_service.measure_deepl_latency(
+                                                transcript, user_lang, other_lang
+                                            )
+                                            print(f"[DEBUG] DeepL translation ({user_lang}→{other_lang}): '{translated_text}', latency: {deepl_latency}ms, attempt: {retry_count + 1}")
+                                            
+                                            if not translated_text or not translated_text.strip():
+                                                retry_count += 1
+                                                if retry_count < max_retries:
+                                                    print(f"[DEBUG] Empty translation result, retrying... ({retry_count}/{max_retries})")
+                                                    await asyncio.sleep(0.1)
+                                                continue
+                                            break
+                                        except Exception as deepl_error:
+                                            retry_count += 1
+                                            print(f"[ERROR] DeepL translation failed (attempt {retry_count}/{max_retries}): {deepl_error}")
+                                            if retry_count < max_retries:
+                                                await asyncio.sleep(0.2)
                                     
                                     if translated_text and translated_text.strip():
                                         voice_map = {
@@ -683,31 +717,38 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                             "zh": "zh-CN-XiaoxiaoNeural"
                                         }
                                         
-                                        audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
-                                            translated_text, other_lang, voice_map.get(other_lang, "en-US-JennyNeural")
-                                        )
-                                        print(f"[DEBUG] Azure TTS audio size: {len(audio_output)} bytes, latency: {azure_latency}ms")
-                                        
-                                        if audio_output:
-                                            hex_audio = audio_output.hex()
-                                            print(f"[DEBUG] Sending translated audio to other user, hex length: {len(hex_audio)}")
+                                        try:
+                                            audio_output, azure_latency = await translation_service.measure_azure_tts_latency(
+                                                translated_text, other_lang, voice_map.get(other_lang, "en-US-JennyNeural")
+                                            )
+                                            print(f"[DEBUG] Azure TTS audio size: {len(audio_output)} bytes, latency: {azure_latency}ms")
                                             
-                                            try:
-                                                if other_ws.client_state.value == 1:  # CONNECTED state
-                                                    await other_ws.send_text(json.dumps({
-                                                        "type": "translated_audio",
-                                                        "audio": hex_audio,
-                                                        "original_text": transcript,
-                                                        "translated_text": translated_text,
-                                                        "original_language": user_lang,
-                                                        "translated_language": other_lang
-                                                    }))
-                                                    print(f"[DEBUG] Sent translated audio to other user ({user_lang}→{other_lang})")
-                                                else:
-                                                    print(f"[WARNING] WebSocket not in connected state, marking for cleanup")
-                                            except Exception as send_error:
-                                                print(f"[ERROR] Failed to send translated audio to client: {send_error}")
-                                                print(f"[DEBUG] Error details - Original: {user_lang}, Target: {other_lang}, Text: '{translated_text[:50]}...'")
+                                            if audio_output and len(audio_output) > 0:
+                                                hex_audio = audio_output.hex()
+                                                print(f"[DEBUG] Sending translated audio to other user, hex length: {len(hex_audio)}")
+                                                
+                                                try:
+                                                    if other_ws.client_state.value == 1:  # CONNECTED state
+                                                        await other_ws.send_text(json.dumps({
+                                                            "type": "translated_audio",
+                                                            "audio": hex_audio,
+                                                            "original_text": transcript,
+                                                            "translated_text": translated_text,
+                                                            "original_language": user_lang,
+                                                            "translated_language": other_lang
+                                                        }))
+                                                        print(f"[DEBUG] Successfully sent translated audio ({user_lang}→{other_lang})")
+                                                    else:
+                                                        print(f"[WARNING] WebSocket not in connected state, skipping audio transmission")
+                                                except Exception as send_error:
+                                                    print(f"[ERROR] Failed to send translated audio to client: {send_error}")
+                                                    print(f"[DEBUG] Error details - Original: {user_lang}, Target: {other_lang}, Text: '{translated_text[:50]}...'")
+                                            else:
+                                                print(f"[ERROR] Azure TTS failed to generate audio for: '{translated_text}'")
+                                        except Exception as tts_error:
+                                            print(f"[ERROR] Azure TTS processing failed: {tts_error}")
+                                    else:
+                                        print(f"[ERROR] DeepL translation failed after {max_retries} attempts ({user_lang}→{other_lang}): '{transcript}'")
                 except Exception as e:
                     print(f"[DEBUG] ERROR in audio_data processing: {e}")
                     print(f"[DEBUG] Exception type: {type(e).__name__}")
