@@ -67,6 +67,7 @@ function App() {
     if (isConnected) return
     
     if (wsRef.current) {
+      console.log('[DEBUG] Closing existing WebSocket connection')
       wsRef.current.close()
       wsRef.current = null
     }
@@ -77,6 +78,8 @@ function App() {
     const uniqueWsUrl = `${wsBaseUrl}/${roomId}?clientId=${clientId}`
     console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
     console.log('[DEBUG] Client ID:', clientId)
+    console.log('[DEBUG] User Language:', userLanguage)
+    console.log('[DEBUG] Room ID:', roomId)
     
     let retryCount = 0
     const maxRetries = 3
@@ -92,23 +95,29 @@ function App() {
           console.log('[DEBUG] WebSocket connection established for client:', clientId)
           console.log('[DEBUG] WebSocket readyState:', ws.readyState)
           console.log('[DEBUG] WebSocket URL:', ws.url)
+          console.log('[DEBUG] WebSocket protocol:', ws.protocol)
+          console.log('[DEBUG] WebSocket extensions:', ws.extensions)
           setIsConnected(true)
           retryCount = 0
-          ws.send(JSON.stringify({
+          
+          const languageConfigMessage = {
             type: 'language_config',
             language: userLanguage,
             clientId: clientId
-          }))
+          }
+          console.log('[DEBUG] Sending language_config message:', languageConfigMessage)
+          ws.send(JSON.stringify(languageConfigMessage))
           
           heartbeatIntervalRef.current = window.setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'heartbeat' }))
+              ws.send(JSON.stringify({ type: 'heartbeat', clientId: clientId }))
             }
           }, 30000)
           
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'request_room_status' }))
+              console.log('[DEBUG] Requesting room status for client:', clientId)
+              ws.send(JSON.stringify({ type: 'request_room_status', clientId: clientId }))
             }
           }, 1000)
         }
@@ -201,11 +210,16 @@ function App() {
         }
 
         ws.onerror = (error) => {
-          console.error('[DEBUG] WebSocket error:', error)
+          console.error('[DEBUG] WebSocket error for client:', clientId, error)
+          console.error('[DEBUG] WebSocket state during error:', ws.readyState)
+          console.error('[DEBUG] WebSocket URL during error:', ws.url)
           if (retryCount < maxRetries) {
             retryCount++
-            console.log(`[DEBUG] Connection failed, retrying (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
+            console.log(`[DEBUG] Connection failed for client ${clientId}, retrying (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
             setTimeout(attemptConnection, retryDelay)
+          } else {
+            console.error('[DEBUG] Max retries reached for client:', clientId, 'giving up')
+            setIsConnected(false)
           }
         }
 
@@ -313,20 +327,37 @@ function App() {
         const reader = new FileReader()
         reader.onloadend = () => {
           const base64Audio = (reader.result as string).split(',')[1]
-          console.log('[DEBUG] Sending audio_data message, base64 length:', base64Audio.length)
-          console.log('[DEBUG] Client language:', userLanguage, 'Room:', roomId)
+          const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
+          
+          console.log('[DEBUG] Preparing audio_data message for asymmetric routing test')
+          console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
+          console.log('[DEBUG] Base64 audio length:', base64Audio.length)
           console.log('[DEBUG] WebSocket state:', wsRef.current?.readyState)
+          console.log('[DEBUG] WebSocket URL:', wsRef.current?.url)
           
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
+            const audioMessage = {
               type: 'audio_data',
               audio: base64Audio,
               language: userLanguage,
-              client_info: `${userLanguage}_client_${Date.now()}`
-            }))
-            console.log('[DEBUG] Audio_data message sent successfully')
+              clientId: clientId,
+              client_info: `${userLanguage}_${clientId}_${Date.now()}`,
+              timestamp: Date.now(),
+              routing_debug: `from_${clientId}_lang_${userLanguage}`
+            }
+            
+            console.log('[DEBUG] Sending audio_data message:', {
+              type: audioMessage.type,
+              clientId: audioMessage.clientId,
+              language: audioMessage.language,
+              audioLength: audioMessage.audio.length,
+              timestamp: audioMessage.timestamp
+            })
+            
+            wsRef.current.send(JSON.stringify(audioMessage))
+            console.log('[DEBUG] Audio_data message sent successfully from client:', clientId)
           } else {
-            console.log('[ERROR] WebSocket not open, cannot send audio_data')
+            console.log('[ERROR] WebSocket not open for client:', clientId, 'state:', wsRef.current?.readyState)
           }
         }
         reader.readAsDataURL(audioBlob)
