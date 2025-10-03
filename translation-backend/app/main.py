@@ -617,6 +617,21 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             print(f"[DEBUG] Message type: {message_type} from websocket {id(websocket)}")
             print(f"[DEBUG] Message keys: {list(message.keys())}")
             
+            if message_type == "audio_data":
+                print(f"[CRITICAL] *** AUDIO_DATA MESSAGE DETECTED - SHOULD PROCESS ***")
+                print(f"[CRITICAL] Websocket {id(websocket)} sent audio_data message")
+                print(f"[CRITICAL] Connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
+                print(f"[CRITICAL] User language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
+                print(f"[CRITICAL] Audio field present: {'audio' in message}")
+                if 'audio' in message:
+                    print(f"[CRITICAL] Audio data length: {len(message['audio'])}")
+                print(f"[CRITICAL] Client info: {message.get('client_info', 'not provided')}")
+                print(f"[CRITICAL] *** PROCEEDING TO AUDIO_DATA HANDLER ***")
+            elif message_type == "request_latency":
+                print(f"[DEBUG] Processing request_latency message (normal)")
+            else:
+                print(f"[DEBUG] Processing message type: {message_type}")
+            
             if message_type == "heartbeat":
                 if websocket.client_state.value == 1:
                     await websocket.send_text(json.dumps({"type": "heartbeat_ack"}))
@@ -661,8 +676,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     except Exception as e:
                         print(f"[WARNING] Failed to send room status after language change to client {id(client)}: {e}")
             
-            elif message["type"] == "audio_data":
-                print(f"[DEBUG] *** PROCESSING AUDIO_DATA MESSAGE ***")
+            elif message_type == "audio_data":
+                print(f"[CRITICAL] *** REACHED AUDIO_DATA HANDLER - PROCESSING ***")
                 print(f"[DEBUG] Received audio_data message from websocket {id(websocket)}")
                 print(f"[DEBUG] Sender connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
                 print(f"[DEBUG] Sender language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
