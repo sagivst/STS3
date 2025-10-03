@@ -861,22 +861,33 @@ function App() {
                   </Button>
                   <Button 
                     onClick={() => {
+                      console.log('[CRITICAL] *** MANUAL TEST BUTTON CLICKED ***')
                       const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
-                      console.log('[DEBUG] Manually triggering audio_data message for asymmetric routing test')
-                      console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage)
+                      console.log('[CRITICAL] Manually triggering audio_data message for asymmetric routing test')
+                      console.log('[CRITICAL] Client ID:', clientId, 'Language:', userLanguage)
+                      console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState)
+                      console.log('[CRITICAL] WebSocket URL:', wsRef.current?.url)
+                      
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" +
                           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-                        wsRef.current.send(JSON.stringify({
+                        
+                        const message = {
                           type: 'audio_data',
                           audio: syntheticAudio,
                           language: userLanguage,
                           clientId: clientId,
                           client_info: `${userLanguage}_${clientId}_manual_test_${Date.now()}`
-                        }))
-                        console.log('[DEBUG] Manual audio_data message sent for routing test from client:', clientId)
+                        };
+                        
+                        console.log('[CRITICAL] Sending message:', JSON.stringify(message).substring(0, 200) + '...')
+                        wsRef.current.send(JSON.stringify(message))
+                        console.log('[CRITICAL] *** MANUAL AUDIO_DATA MESSAGE SENT SUCCESSFULLY ***')
+                        console.log('[CRITICAL] Message sent from client:', clientId, 'Language:', userLanguage)
                       } else {
-                        console.log('[ERROR] WebSocket not open for manual audio_data test, client:', clientId)
+                        console.log('[CRITICAL] *** WEBSOCKET NOT OPEN FOR MANUAL TEST ***')
+                        console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState)
+                        console.log('[CRITICAL] Expected state: 1 (OPEN)')
                       }
                     }}
                     variant="outline"
