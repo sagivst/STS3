@@ -573,13 +573,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
     for client in room_users:
         try:
-            await client.send_text(json.dumps({
-                "type": "room_status",
-                "connected_users": len(room_users),
-                "user_languages": user_langs
-            }))
-        except:
-            pass
+            if client.client_state.value == 1:  # Only send to connected clients
+                await client.send_text(json.dumps({
+                    "type": "room_status",
+                    "connected_users": len(room_users),
+                    "user_languages": user_langs
+                }))
+                print(f"[DEBUG] Sent room_status to client {id(client)}: {len(room_users)} users")
+        except Exception as e:
+            print(f"[WARNING] Failed to send room_status to client {id(client)}: {e}")
     
     try:
         while True:
@@ -999,7 +1001,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 if rooms[room_id]:
                     room_users = rooms[room_id]
                     user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
-                    clients_to_remove = []
                     
                     for client in room_users:
                         try:
@@ -1009,15 +1010,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                     "connected_users": len(room_users),
                                     "user_languages": user_langs
                                 }))
+                                print(f"[DEBUG] Sent room_status update to client {id(client)}")
                         except Exception as e:
-                            print(f"[DEBUG] Failed to send room status to client: {e}")
-                            clients_to_remove.append(client)
-                    
-                    for client in clients_to_remove:
-                        if client in rooms.get(room_id, []):
-                            rooms[room_id].remove(client)
-                        if client in user_languages:
-                            del user_languages[client]
+                            print(f"[WARNING] Failed to send room status to client {id(client)}: {e}")
                 else:
                     del rooms[room_id]
                     print(f"[DEBUG] Cleaned up empty room: {room_id}")
