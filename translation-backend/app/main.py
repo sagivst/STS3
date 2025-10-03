@@ -610,29 +610,40 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
         while True:
             print(f"[DEBUG] Waiting for message from websocket {id(websocket)}")
             data = await websocket.receive_text()
-            print(f"[DEBUG] Received message from websocket {id(websocket)}: {data[:100]}...")
-            print(f"[DEBUG] Full message length: {len(data)} characters")
-            print(f"[DEBUG] Sender websocket ID: {id(websocket)}, connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
-            message = json.loads(data)
-            message_type = message.get('type', 'unknown')
-            print(f"[DEBUG] Message type: {message_type} from websocket {id(websocket)}")
-            print(f"[DEBUG] Message keys: {list(message.keys())}")
-            print(f"[DEBUG] WebSocket state: {websocket.client_state.value}, in user_languages: {websocket in user_languages}")
+            print(f"[CRITICAL] *** RAW MESSAGE RECEIVED ***")
+            print(f"[CRITICAL] Websocket {id(websocket)}, connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
+            print(f"[CRITICAL] Raw data (first 200 chars): {data[:200]}...")
+            print(f"[CRITICAL] Full message length: {len(data)} characters")
+            print(f"[CRITICAL] Message contains 'audio_data': {'audio_data' in data}")
+            print(f"[CRITICAL] Message contains 'request_latency': {'request_latency' in data}")
+            print(f"[CRITICAL] *** PARSING MESSAGE ***")
             
-            if message_type == "audio_data":
-                print(f"[CRITICAL] *** AUDIO_DATA MESSAGE DETECTED - SHOULD PROCESS ***")
-                print(f"[CRITICAL] Websocket {id(websocket)} sent audio_data message")
-                print(f"[CRITICAL] Connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
-                print(f"[CRITICAL] User language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
-                print(f"[CRITICAL] Audio field present: {'audio' in message}")
-                if 'audio' in message:
-                    print(f"[CRITICAL] Audio data length: {len(message['audio'])}")
-                print(f"[CRITICAL] Client info: {message.get('client_info', 'not provided')}")
-                print(f"[CRITICAL] *** PROCEEDING TO AUDIO_DATA HANDLER ***")
-            elif message_type == "request_latency":
-                print(f"[DEBUG] Processing request_latency message (normal)")
-            else:
-                print(f"[DEBUG] Processing message type: {message_type}")
+            try:
+                message = json.loads(data)
+                message_type = message.get('type', 'unknown')
+                print(f"[CRITICAL] Successfully parsed JSON - Message type: {message_type}")
+                print(f"[CRITICAL] Message keys: {list(message.keys())}")
+                print(f"[CRITICAL] WebSocket state: {websocket.client_state.value}, in user_languages: {websocket in user_languages}")
+                
+                if message_type == "audio_data":
+                    print(f"[CRITICAL] *** AUDIO_DATA MESSAGE DETECTED - SHOULD PROCESS ***")
+                    print(f"[CRITICAL] Websocket {id(websocket)} sent audio_data message")
+                    print(f"[CRITICAL] Connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
+                    print(f"[CRITICAL] User language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
+                    print(f"[CRITICAL] Audio field present: {'audio' in message}")
+                    if 'audio' in message:
+                        print(f"[CRITICAL] Audio data length: {len(message['audio'])}")
+                    print(f"[CRITICAL] Client info: {message.get('client_info', 'not provided')}")
+                    print(f"[CRITICAL] *** PROCEEDING TO AUDIO_DATA HANDLER ***")
+                elif message_type == "request_latency":
+                    print(f"[DEBUG] Processing request_latency message (normal)")
+                else:
+                    print(f"[DEBUG] Processing message type: {message_type}")
+            except json.JSONDecodeError as e:
+                print(f"[CRITICAL] *** JSON DECODE ERROR ***")
+                print(f"[CRITICAL] Error: {e}")
+                print(f"[CRITICAL] Raw data: {data}")
+                continue
             
             if message_type == "heartbeat":
                 if websocket.client_state.value == 1:
