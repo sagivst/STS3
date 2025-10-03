@@ -562,12 +562,16 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     print(f"[DEBUG] WebSocket connected to room {room_id}, total connections: {len(rooms[room_id])}")
     print(f"[DEBUG] WebSocket ID: {id(websocket)}, Connection order: {len(rooms[room_id])}")
     print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
+    print(f"[DEBUG] Current room clients: {[id(client) for client in rooms[room_id]]}")
+    print(f"[DEBUG] Current user_languages keys: {[id(client) for client in user_languages.keys()]}")
     
     user_languages[websocket] = {
         "language": "en",
         "connection_order": len(rooms[room_id]),
         "websocket_id": id(websocket)
     }
+    
+    print(f"[DEBUG] Added websocket {id(websocket)} to user_languages with language: en")
     
     room_users = rooms.get(room_id, [])
     user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
@@ -605,6 +609,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 }
                 
                 print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}, connection order: {old_connection_order}")
+                print(f"[DEBUG] Current user_languages after language change: {[(id(client), data['language']) for client, data in user_languages.items()]}")
                 
                 await websocket.send_text(json.dumps({
                     "type": "language_config_updated",
@@ -628,7 +633,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         print(f"[WARNING] Failed to send room status after language change to client {id(client)}: {e}")
             
             elif message["type"] == "audio_data":
-                print(f"[DEBUG] Received audio_data message")
+                print(f"[DEBUG] Received audio_data message from websocket {id(websocket)}")
+                print(f"[DEBUG] Current room has {len(rooms.get(room_id, []))} clients: {[id(client) for client in rooms.get(room_id, [])]}")
+                print(f"[DEBUG] Sender language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
                 try:
                     if "audio" not in message:
                         print(f"[DEBUG] ERROR: No audio field in message")
