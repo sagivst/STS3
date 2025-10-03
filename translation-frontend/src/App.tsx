@@ -66,6 +66,11 @@ function App() {
   const connectToRoom = async () => {
     if (isConnected) return
     
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
     const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
     console.log('[DEBUG] Attempting to connect to WebSocket URL:', `${wsUrl}/ws/${roomId}`)
@@ -198,7 +203,6 @@ function App() {
         }
 
         wsRef.current = ws
-        ;(window as any).ws = ws
         
       } catch (error) {
         console.error('[DEBUG] Failed to connect:', error)
