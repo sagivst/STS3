@@ -553,11 +553,21 @@ async def get_latency():
 
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str):
+    print(f"[DEBUG] ===== NEW WEBSOCKET CONNECTION ATTEMPT =====")
+    print(f"[DEBUG] Room ID: {room_id}")
+    print(f"[DEBUG] WebSocket object ID: {id(websocket)}")
+    print(f"[DEBUG] Current rooms before accept: {list(rooms.keys())}")
+    print(f"[DEBUG] Current room {room_id} clients before accept: {len(rooms.get(room_id, []))}")
+    
     await websocket.accept()
+    print(f"[DEBUG] WebSocket accepted successfully")
     
     if room_id not in rooms:
         rooms[room_id] = []
+        print(f"[DEBUG] Created new room: {room_id}")
+    
     rooms[room_id].append(websocket)
+    print(f"[DEBUG] Added websocket to room, new count: {len(rooms[room_id])}")
     
     print(f"[DEBUG] WebSocket connected to room {room_id}, total connections: {len(rooms[room_id])}")
     print(f"[DEBUG] WebSocket ID: {id(websocket)}, Connection order: {len(rooms[room_id])}")
@@ -588,10 +598,14 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             print(f"[WARNING] Failed to send room_status to client {id(client)}: {e}")
     
     try:
+        print(f"[DEBUG] Starting message loop for websocket {id(websocket)}")
         while True:
+            print(f"[DEBUG] Waiting for message from websocket {id(websocket)}")
             data = await websocket.receive_text()
+            print(f"[DEBUG] Received message from websocket {id(websocket)}: {data[:100]}...")
             message = json.loads(data)
             message_type = message.get('type', 'unknown')
+            print(f"[DEBUG] Message type: {message_type} from websocket {id(websocket)}")
             
             if message_type == "heartbeat":
                 if websocket.client_state.value == 1:
