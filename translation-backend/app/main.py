@@ -613,36 +613,19 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 }))
                 
                 room_users = rooms.get(room_id, [])
-                active_clients = []
-                clients_to_remove = []
+                user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
                 
                 for client in room_users:
                     try:
                         if client.client_state.value == 1:
-                            active_clients.append(client)
-                        else:
-                            clients_to_remove.append(client)
+                            await client.send_text(json.dumps({
+                                "type": "room_status",
+                                "connected_users": len(room_users),
+                                "user_languages": user_langs
+                            }))
+                            print(f"[DEBUG] Sent room_status after language change to client {id(client)}")
                     except Exception as e:
-                        print(f"[DEBUG] Client state check failed: {e}")
-                        clients_to_remove.append(client)
-                
-                for client in clients_to_remove:
-                    if client in rooms.get(room_id, []):
-                        rooms[room_id].remove(client)
-                    if client in user_languages:
-                        del user_languages[client]
-                
-                user_langs = [user_languages.get(client, {}).get("language", "en") for client in active_clients]
-                
-                for client in active_clients:
-                    try:
-                        await client.send_text(json.dumps({
-                            "type": "room_status",
-                            "connected_users": len(active_clients),
-                            "user_languages": user_langs
-                        }))
-                    except Exception as e:
-                        print(f"[DEBUG] Failed to send room status to client: {e}")
+                        print(f"[WARNING] Failed to send room status after language change to client {id(client)}: {e}")
             
             elif message["type"] == "audio_data":
                 print(f"[DEBUG] Received audio_data message")
