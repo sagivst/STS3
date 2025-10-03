@@ -582,6 +582,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     }
     
     print(f"[DEBUG] Added websocket {id(websocket)} to user_languages with language: en")
+    print(f"[DEBUG] WebSocket connection order: {len(rooms[room_id])}")
+    print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
+    print(f"[DEBUG] Current user_languages keys: {[id(client) for client in user_languages.keys()]}")
     
     room_users = rooms.get(room_id, [])
     user_langs = [user_languages.get(client, {}).get("language", "en") for client in room_users]
@@ -636,6 +639,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 }
                 
                 print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}, connection order: {old_connection_order}")
+                print(f"[DEBUG] WebSocket client_state after language change: {websocket.client_state.value}")
+                print(f"[DEBUG] Preserved connection order: {old_connection_order}")
                 print(f"[DEBUG] Current user_languages after language change: {[(id(client), data['language']) for client, data in user_languages.items()]}")
                 
                 await websocket.send_text(json.dumps({
@@ -660,9 +665,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         print(f"[WARNING] Failed to send room status after language change to client {id(client)}: {e}")
             
             elif message["type"] == "audio_data":
+                print(f"[DEBUG] *** PROCESSING AUDIO_DATA MESSAGE ***")
                 print(f"[DEBUG] Received audio_data message from websocket {id(websocket)}")
-                print(f"[DEBUG] Current room has {len(rooms.get(room_id, []))} clients: {[id(client) for client in rooms.get(room_id, [])]}")
+                print(f"[DEBUG] Sender connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
                 print(f"[DEBUG] Sender language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
+                print(f"[DEBUG] Current room has {len(rooms.get(room_id, []))} clients: {[id(client) for client in rooms.get(room_id, [])]}")
+                print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
+                print(f"[DEBUG] *** AUDIO_DATA PROCESSING START ***")
                 try:
                     if "audio" not in message:
                         print(f"[DEBUG] ERROR: No audio field in message")
@@ -706,6 +715,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         for i, other_ws in enumerate(room_clients):
                             print(f"[DEBUG] Checking client {i+1}/{len(room_clients)}, websocket ID: {id(other_ws)}")
                             print(f"[DEBUG] Client state: {other_ws.client_state.value}, is sender: {other_ws == websocket}")
+                            print(f"[DEBUG] Other client in user_languages: {other_ws in user_languages}")
                             
                             if other_ws != websocket and other_ws in user_languages:
                                 other_lang = user_languages[other_ws]["language"]
@@ -777,6 +787,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                                         print(f"[DEBUG] Successfully sent translated audio ({user_lang}→{other_lang}) from order {user_languages[websocket].get('connection_order', 'unknown')} to order {user_languages[other_ws].get('connection_order', 'unknown')}")
                                                     else:
                                                         print(f"[WARNING] WebSocket not in connected state (state: {other_ws.client_state.value}), skipping audio transmission")
+                                                        print(f"[DEBUG] Target websocket details - ID: {id(other_ws)}, connection_order: {user_languages[other_ws].get('connection_order', 'unknown')}")
                                                 except Exception as send_error:
                                                     print(f"[ERROR] Failed to send translated audio to client {id(other_ws)}: {send_error}")
                                                     print(f"[DEBUG] Error details - Original: {user_lang}, Target: {other_lang}, Text: '{translated_text[:50]}...'")
