@@ -817,6 +817,28 @@ function App() {
                   >
                     Test Azure TTS (Text → Speech)
                   </Button>
+                  <Button 
+                    onClick={() => {
+                      console.log('[DEBUG] Manually triggering audio_data message for asymmetric routing test')
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+                        wsRef.current.send(JSON.stringify({
+                          type: 'audio_data',
+                          audio: syntheticAudio,
+                          language: userLanguage,
+                          client_info: `${userLanguage}_manual_test_${Date.now()}`
+                        }))
+                        console.log('[DEBUG] Manual audio_data message sent for routing test')
+                      } else {
+                        console.log('[ERROR] WebSocket not open for manual audio_data test')
+                      }
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="w-full bg-yellow-50 border-yellow-200 hover:bg-yellow-100"
+                  >
+                    🔧 Manual Audio_Data Test (Debug Routing)
+                  </Button>
                 </div>
               </div>
             )}
