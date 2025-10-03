@@ -73,7 +73,11 @@ function App() {
     
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
     const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
-    console.log('[DEBUG] Attempting to connect to WebSocket URL:', `${wsUrl}/ws/${roomId}`)
+    
+    const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const uniqueWsUrl = `${wsUrl}/ws/${roomId}?clientId=${clientId}`
+    console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
+    console.log('[DEBUG] Client ID:', clientId)
     
     let retryCount = 0
     const maxRetries = 3
@@ -81,16 +85,20 @@ function App() {
     
     const attemptConnection = () => {
       try {
-        const ws = new WebSocket(`${wsUrl}/ws/${roomId}`)
+        const ws = new WebSocket(uniqueWsUrl)
+        console.log('[DEBUG] Created new WebSocket instance with unique URL')
         wsRef.current = ws
         
         ws.onopen = () => {
-          console.log('[DEBUG] WebSocket connection established')
+          console.log('[DEBUG] WebSocket connection established for client:', clientId)
+          console.log('[DEBUG] WebSocket readyState:', ws.readyState)
+          console.log('[DEBUG] WebSocket URL:', ws.url)
           setIsConnected(true)
           retryCount = 0
           ws.send(JSON.stringify({
             type: 'language_config',
-            language: userLanguage
+            language: userLanguage,
+            clientId: clientId
           }))
           
           heartbeatIntervalRef.current = window.setInterval(() => {
@@ -823,18 +831,21 @@ function App() {
                   </Button>
                   <Button 
                     onClick={() => {
+                      const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
                       console.log('[DEBUG] Manually triggering audio_data message for asymmetric routing test')
+                      console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage)
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
                         wsRef.current.send(JSON.stringify({
                           type: 'audio_data',
                           audio: syntheticAudio,
                           language: userLanguage,
-                          client_info: `${userLanguage}_manual_test_${Date.now()}`
+                          clientId: clientId,
+                          client_info: `${userLanguage}_${clientId}_manual_test_${Date.now()}`
                         }))
-                        console.log('[DEBUG] Manual audio_data message sent for routing test')
+                        console.log('[DEBUG] Manual audio_data message sent for routing test from client:', clientId)
                       } else {
-                        console.log('[ERROR] WebSocket not open for manual audio_data test')
+                        console.log('[ERROR] WebSocket not open for manual audio_data test, client:', clientId)
                       }
                     }}
                     variant="outline"

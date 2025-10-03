@@ -553,14 +553,18 @@ async def get_latency():
 
 @app.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str):
+    query_params = dict(websocket.query_params)
+    client_id = query_params.get('clientId', f'auto_{id(websocket)}')
+    
     print(f"[DEBUG] ===== NEW WEBSOCKET CONNECTION ATTEMPT =====")
     print(f"[DEBUG] Room ID: {room_id}")
+    print(f"[DEBUG] Client ID: {client_id}")
     print(f"[DEBUG] WebSocket object ID: {id(websocket)}")
     print(f"[DEBUG] Current rooms before accept: {list(rooms.keys())}")
     print(f"[DEBUG] Current room {room_id} clients before accept: {len(rooms.get(room_id, []))}")
     
     await websocket.accept()
-    print(f"[DEBUG] WebSocket accepted successfully")
+    print(f"[DEBUG] WebSocket accepted successfully for client: {client_id}")
     
     if room_id not in rooms:
         rooms[room_id] = []
@@ -578,7 +582,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     user_languages[websocket] = {
         "language": "en",
         "connection_order": len(rooms[room_id]),
-        "websocket_id": id(websocket)
+        "websocket_id": id(websocket),
+        "client_id": client_id
     }
     
     print(f"[DEBUG] Added websocket {id(websocket)} to user_languages with language: en")
@@ -631,14 +636,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             if message_type == "language_config":
                 old_language = user_languages.get(websocket, {}).get("language", None)
                 old_connection_order = user_languages.get(websocket, {}).get("connection_order", "unknown")
+                old_client_id = user_languages.get(websocket, {}).get("client_id", "unknown")
+                new_client_id = message.get("clientId", old_client_id)
                 
                 user_languages[websocket] = {
                     "language": message["language"],
                     "connection_order": old_connection_order,
-                    "websocket_id": id(websocket)
+                    "websocket_id": id(websocket),
+                    "client_id": new_client_id
                 }
                 
-                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}, connection order: {old_connection_order}")
+                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for client {new_client_id}, websocket {id(websocket)}, connection order: {old_connection_order}")
                 print(f"[DEBUG] WebSocket client_state after language change: {websocket.client_state.value}")
                 print(f"[DEBUG] Preserved connection order: {old_connection_order}")
                 print(f"[DEBUG] Current user_languages after language change: {[(id(client), data['language']) for client, data in user_languages.items()]}")
@@ -709,11 +717,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     
                     if transcript and transcript.strip():
                         room_clients = rooms.get(room_id, [])
+                        sender_client_id = user_languages[websocket].get('client_id', 'unknown')
+                        sender_connection_order = user_languages[websocket].get('connection_order', 'unknown')
+                        
                         print(f"[DEBUG] Room has {len(room_clients)} clients, processing transcript: '{transcript}'")
-                        print(f"[DEBUG] Sender websocket ID: {id(websocket)}, connection order: {user_languages[websocket].get('connection_order', 'unknown')}")
+                        print(f"[DEBUG] Sender client ID: {sender_client_id}, websocket ID: {id(websocket)}, connection order: {sender_connection_order}")
                         
                         for i, other_ws in enumerate(room_clients):
-                            print(f"[DEBUG] Checking client {i+1}/{len(room_clients)}, websocket ID: {id(other_ws)}")
+                            other_client_id = user_languages.get(other_ws, {}).get('client_id', 'unknown')
+                            other_connection_order = user_languages.get(other_ws, {}).get('connection_order', 'unknown')
+                            
+                            print(f"[DEBUG] Checking client {i+1}/{len(room_clients)}, client ID: {other_client_id}, websocket ID: {id(other_ws)}")
                             print(f"[DEBUG] Client state: {other_ws.client_state.value}, is sender: {other_ws == websocket}")
                             print(f"[DEBUG] Other client in user_languages: {other_ws in user_languages}")
                             
