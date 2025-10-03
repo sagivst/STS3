@@ -303,13 +303,19 @@ function App() {
         reader.onloadend = () => {
           const base64Audio = (reader.result as string).split(',')[1]
           console.log('[DEBUG] Sending audio_data message, base64 length:', base64Audio.length)
+          console.log('[DEBUG] Client language:', userLanguage, 'Room:', roomId)
+          console.log('[DEBUG] WebSocket state:', wsRef.current?.readyState)
           
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({
               type: 'audio_data',
               audio: base64Audio,
-              language: userLanguage
+              language: userLanguage,
+              client_info: `${userLanguage}_client_${Date.now()}`
             }))
+            console.log('[DEBUG] Audio_data message sent successfully')
+          } else {
+            console.log('[ERROR] WebSocket not open, cannot send audio_data')
           }
         }
         reader.readAsDataURL(audioBlob)

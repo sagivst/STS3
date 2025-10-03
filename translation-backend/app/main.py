@@ -560,10 +560,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     rooms[room_id].append(websocket)
     
     print(f"[DEBUG] WebSocket connected to room {room_id}, total connections: {len(rooms[room_id])}")
-    print(f"[DEBUG] WebSocket ID: {id(websocket)}")
+    print(f"[DEBUG] WebSocket ID: {id(websocket)}, Connection order: {len(rooms[room_id])}")
+    print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
     
     user_languages[websocket] = {
-        "language": "en"
+        "language": "en",
+        "connection_order": len(rooms[room_id]),
+        "websocket_id": id(websocket)
     }
     
     room_users = rooms.get(room_id, [])
@@ -591,12 +594,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             
             if message_type == "language_config":
                 old_language = user_languages.get(websocket, {}).get("language", None)
+                old_connection_order = user_languages.get(websocket, {}).get("connection_order", "unknown")
                 
                 user_languages[websocket] = {
-                    "language": message["language"]
+                    "language": message["language"],
+                    "connection_order": old_connection_order,
+                    "websocket_id": id(websocket)
                 }
                 
-                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}")
+                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}, connection order: {old_connection_order}")
                 
                 await websocket.send_text(json.dumps({
                     "type": "language_config_updated",
@@ -676,11 +682,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                     if transcript and transcript.strip():
                         room_clients = rooms.get(room_id, [])
                         print(f"[DEBUG] Room has {len(room_clients)} clients, processing transcript: '{transcript}'")
+                        print(f"[DEBUG] Sender websocket ID: {id(websocket)}, connection order: {user_languages[websocket].get('connection_order', 'unknown')}")
                         
-                        for other_ws in room_clients:
+                        for i, other_ws in enumerate(room_clients):
+                            print(f"[DEBUG] Checking client {i+1}/{len(room_clients)}, websocket ID: {id(other_ws)}")
+                            print(f"[DEBUG] Client state: {other_ws.client_state.value}, is sender: {other_ws == websocket}")
+                            
                             if other_ws != websocket and other_ws in user_languages:
                                 other_lang = user_languages[other_ws]["language"]
-                                print(f"[DEBUG] Processing for other user with language: {other_lang}")
+                                other_connection_order = user_languages[other_ws].get("connection_order", "unknown")
+                                print(f"[DEBUG] Processing for other user with language: {other_lang}, connection order: {other_connection_order}")
+                                print(f"[DEBUG] Routing: {user_lang} (order {user_languages[websocket].get('connection_order', 'unknown')}) → {other_lang} (order {other_connection_order})")
                                 
                                 if other_lang != user_lang:
                                     max_retries = 3
@@ -728,6 +740,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                                 print(f"[DEBUG] Sending translated audio to other user, hex length: {len(hex_audio)}")
                                                 
                                                 try:
+                                                    print(f"[DEBUG] Attempting to send translated audio to websocket {id(other_ws)}")
+                                                    print(f"[DEBUG] Target client state: {other_ws.client_state.value}")
+                                                    print(f"[DEBUG] Target client connection order: {user_languages[other_ws].get('connection_order', 'unknown')}")
+                                                    
                                                     if other_ws.client_state.value == 1:  # CONNECTED state
                                                         await other_ws.send_text(json.dumps({
                                                             "type": "translated_audio",
@@ -735,14 +751,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                                             "original_text": transcript,
                                                             "translated_text": translated_text,
                                                             "original_language": user_lang,
-                                                            "translated_language": other_lang
+                                                            "translated_language": other_lang,
+                                                            "sender_connection_order": user_languages[websocket].get('connection_order', 'unknown'),
+                                                            "receiver_connection_order": user_languages[other_ws].get('connection_order', 'unknown')
                                                         }))
-                                                        print(f"[DEBUG] Successfully sent translated audio ({user_lang}→{other_lang})")
+                                                        print(f"[DEBUG] Successfully sent translated audio ({user_lang}→{other_lang}) from order {user_languages[websocket].get('connection_order', 'unknown')} to order {user_languages[other_ws].get('connection_order', 'unknown')}")
                                                     else:
-                                                        print(f"[WARNING] WebSocket not in connected state, skipping audio transmission")
+                                                        print(f"[WARNING] WebSocket not in connected state (state: {other_ws.client_state.value}), skipping audio transmission")
                                                 except Exception as send_error:
-                                                    print(f"[ERROR] Failed to send translated audio to client: {send_error}")
+                                                    print(f"[ERROR] Failed to send translated audio to client {id(other_ws)}: {send_error}")
                                                     print(f"[DEBUG] Error details - Original: {user_lang}, Target: {other_lang}, Text: '{translated_text[:50]}...'")
+                                                    print(f"[DEBUG] Target websocket state: {other_ws.client_state.value}")
                                             else:
                                                 print(f"[ERROR] Azure TTS failed to generate audio for: '{translated_text}'")
                                         except Exception as tts_error:
