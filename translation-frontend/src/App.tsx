@@ -71,11 +71,10 @@ function App() {
       wsRef.current = null
     }
     
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001'
-    const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
+    const wsBaseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8001'
     
     const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    const uniqueWsUrl = `${wsUrl}/ws/${roomId}?clientId=${clientId}`
+    const uniqueWsUrl = `${wsBaseUrl}/${roomId}?clientId=${clientId}`
     console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
     console.log('[DEBUG] Client ID:', clientId)
     
