@@ -74,12 +74,18 @@ function App() {
     
     const wsBaseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8001'
     
-    const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${performance.now().toString().replace('.', '')}`
+    const uniqueTabId = `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${performance.now()}_${window.crypto.getRandomValues(new Uint32Array(1))[0]}`
+    const browserFingerprint = `${navigator.userAgent.length}_${screen.width}x${screen.height}_${window.devicePixelRatio}_${new Date().getTimezoneOffset()}`
+    const connectionTimestamp = performance.now().toString().replace('.', '')
+    
+    const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${connectionTimestamp}_${Math.floor(Math.random() * 1000000)}_${window.crypto.getRandomValues(new Uint32Array(1))[0]}_${uniqueTabId}_${browserFingerprint.replace(/[^a-zA-Z0-9]/g, '')}_${Math.random().toString(36).substr(2, 5)}_${Math.random().toString(36).substr(2, 8)}`
     const uniqueWsUrl = `${wsBaseUrl}/${roomId}?clientId=${clientId}`
     console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
     console.log('[DEBUG] Client ID:', clientId)
     console.log('[DEBUG] User Language:', userLanguage)
     console.log('[DEBUG] Room ID:', roomId)
+    console.log('[DEBUG] Unique Tab ID:', uniqueTabId)
+    console.log('[DEBUG] Browser Fingerprint:', browserFingerprint)
     
     let retryCount = 0
     const maxRetries = 3
