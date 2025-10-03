@@ -617,17 +617,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             print(f"[DEBUG] Message type: {message_type} from websocket {id(websocket)}")
             print(f"[DEBUG] Message keys: {list(message.keys())}")
             
-            if message_type == "audio_data":
-                print(f"[DEBUG] *** AUDIO_DATA MESSAGE DETECTED ***")
-                print(f"[DEBUG] Websocket {id(websocket)} sent audio_data message")
-                print(f"[DEBUG] Connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
-                print(f"[DEBUG] User language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
-                print(f"[DEBUG] Audio field present: {'audio' in message}")
-                if 'audio' in message:
-                    print(f"[DEBUG] Audio data length: {len(message['audio'])}")
-                print(f"[DEBUG] Client info: {message.get('client_info', 'not provided')}")
-                print(f"[DEBUG] *** END AUDIO_DATA DEBUG ***")
-            
             if message_type == "heartbeat":
                 if websocket.client_state.value == 1:
                     await websocket.send_text(json.dumps({"type": "heartbeat_ack"}))
