@@ -612,10 +612,12 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
             data = await websocket.receive_text()
             print(f"[DEBUG] Received message from websocket {id(websocket)}: {data[:100]}...")
             print(f"[DEBUG] Full message length: {len(data)} characters")
+            print(f"[DEBUG] Sender websocket ID: {id(websocket)}, connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
             message = json.loads(data)
             message_type = message.get('type', 'unknown')
             print(f"[DEBUG] Message type: {message_type} from websocket {id(websocket)}")
             print(f"[DEBUG] Message keys: {list(message.keys())}")
+            print(f"[DEBUG] WebSocket state: {websocket.client_state.value}, in user_languages: {websocket in user_languages}")
             
             if message_type == "audio_data":
                 print(f"[CRITICAL] *** AUDIO_DATA MESSAGE DETECTED - SHOULD PROCESS ***")
