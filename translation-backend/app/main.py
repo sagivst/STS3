@@ -573,16 +573,21 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     rooms[room_id].append(websocket)
     print(f"[DEBUG] Added websocket to room, new count: {len(rooms[room_id])}")
     
+    connection_order = len(rooms[room_id])
+    websocket_id = id(websocket)
+    
     print(f"[DEBUG] WebSocket connected to room {room_id}, total connections: {len(rooms[room_id])}")
-    print(f"[DEBUG] WebSocket ID: {id(websocket)}, Connection order: {len(rooms[room_id])}")
+    print(f"[DEBUG] WebSocket ID: {websocket_id}, Connection order: {connection_order}")
     print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
-    print(f"[DEBUG] Current room clients: {[id(client) for client in rooms[room_id]]}")
-    print(f"[DEBUG] Current user_languages keys: {[id(client) for client in user_languages.keys()]}")
+    print(f"[CRITICAL] *** NEW CONNECTION ESTABLISHED ***")
+    print(f"[CRITICAL] Room: {room_id}, WebSocket: {websocket_id}, Order: {connection_order}, Client: {client_id}")
+    print(f"[CRITICAL] Current room clients: {[id(client) for client in rooms[room_id]]}")
+    print(f"[CRITICAL] Current user_languages keys: {[id(client) for client in user_languages.keys()]}")
     
     user_languages[websocket] = {
         "language": "en",
-        "connection_order": len(rooms[room_id]),
-        "websocket_id": id(websocket),
+        "connection_order": connection_order,
+        "websocket_id": websocket_id,
         "client_id": client_id
     }
     
@@ -738,15 +743,20 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         sender_connection_order = user_languages[websocket].get('connection_order', 'unknown')
                         
                         print(f"[DEBUG] Room has {len(room_clients)} clients, processing transcript: '{transcript}'")
-                        print(f"[DEBUG] Sender client ID: {sender_client_id}, websocket ID: {id(websocket)}, connection order: {sender_connection_order}")
+                        print(f"[CRITICAL] *** AUDIO ROUTING ANALYSIS ***")
+                        print(f"[CRITICAL] Sender: Client {sender_client_id}, WebSocket {id(websocket)}, Order: {sender_connection_order}, Language: {user_lang}")
+                        print(f"[CRITICAL] Room clients: {[id(client) for client in room_clients]}")
                         
                         for i, other_ws in enumerate(room_clients):
                             other_client_id = user_languages.get(other_ws, {}).get('client_id', 'unknown')
                             other_connection_order = user_languages.get(other_ws, {}).get('connection_order', 'unknown')
+                            other_websocket_id = id(other_ws)
+                            other_client_state = other_ws.client_state.value
+                            is_sender = other_ws == websocket
                             
-                            print(f"[DEBUG] Checking client {i+1}/{len(room_clients)}, client ID: {other_client_id}, websocket ID: {id(other_ws)}")
-                            print(f"[DEBUG] Client state: {other_ws.client_state.value}, is sender: {other_ws == websocket}")
-                            print(f"[DEBUG] Other client in user_languages: {other_ws in user_languages}")
+                            print(f"[CRITICAL] Client {i+1}/{len(room_clients)}: {other_client_id}, WebSocket {other_websocket_id}")
+                            print(f"[CRITICAL] - State: {other_client_state}, Is Sender: {is_sender}, Order: {other_connection_order}")
+                            print(f"[CRITICAL] - In user_languages: {other_ws in user_languages}")
                             
                             if other_ws != websocket and other_ws in user_languages:
                                 other_lang = user_languages[other_ws]["language"]

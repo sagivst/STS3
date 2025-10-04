@@ -350,11 +350,12 @@ function App() {
           const base64Audio = (reader.result as string).split(',')[1]
           const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
           
-          console.log('[DEBUG] Preparing audio_data message for asymmetric routing test')
-          console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
-          console.log('[DEBUG] Base64 audio length:', base64Audio.length)
-          console.log('[DEBUG] WebSocket state:', wsRef.current?.readyState)
-          console.log('[DEBUG] WebSocket URL:', wsRef.current?.url)
+          const timestamp = Date.now()
+          
+          console.log('[CRITICAL] *** SENDING AUDIO_DATA MESSAGE ***')
+          console.log('[CRITICAL] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
+          console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState, 'URL:', wsRef.current?.url)
+          console.log('[CRITICAL] Audio data length:', base64Audio.length, 'bytes')
           
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             const audioMessage = {
@@ -362,21 +363,23 @@ function App() {
               audio: base64Audio,
               language: userLanguage,
               clientId: clientId,
-              client_info: `${userLanguage}_${clientId}_${Date.now()}`,
-              timestamp: Date.now(),
-              routing_debug: `from_${clientId}_lang_${userLanguage}`
+              timestamp: timestamp,
+              client_info: `${userLanguage}_${clientId}_${timestamp}`,
+              routing_debug: `from_${clientId}_lang_${userLanguage}_order_unknown`
             }
             
-            console.log('[DEBUG] Sending audio_data message:', {
+            console.log('[CRITICAL] Message structure:', {
               type: audioMessage.type,
-              clientId: audioMessage.clientId,
               language: audioMessage.language,
+              clientId: audioMessage.clientId,
               audioLength: audioMessage.audio.length,
-              timestamp: audioMessage.timestamp
+              timestamp: audioMessage.timestamp,
+              routing_debug: audioMessage.routing_debug
             })
             
             wsRef.current.send(JSON.stringify(audioMessage))
-            console.log('[DEBUG] Audio_data message sent successfully from client:', clientId)
+            console.log('[CRITICAL] ✅ AUDIO_DATA MESSAGE SENT SUCCESSFULLY')
+            console.log('[CRITICAL] Sent from client:', clientId, 'Language:', userLanguage, 'Timestamp:', timestamp)
           } else {
             console.log('[ERROR] WebSocket not open for client:', clientId, 'state:', wsRef.current?.readyState)
           }
