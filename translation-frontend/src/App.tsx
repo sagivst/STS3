@@ -78,14 +78,16 @@ function App() {
     await new Promise(resolve => setTimeout(resolve, randomDelay))
     
     const windowUniqueId = crypto.randomUUID ? crypto.randomUUID() : `win_${Date.now()}_${Math.random()}_${performance.now()}`
-    const tabSpecificEntropy = `${window.outerWidth}_${window.outerHeight}_${window.screenX}_${window.screenY}_${window.history.length}`
+    const tabSpecificEntropy = `${window.outerWidth}_${window.outerHeight}_${window.screenX}_${window.screenY}_${window.history.length}_${window.innerWidth}_${window.innerHeight}`
     const connectionUniqueId = crypto.randomUUID ? crypto.randomUUID() : `conn_${Date.now()}_${Math.random()}_${performance.now()}`
     const browserFingerprint = `${navigator.userAgent.length}_${screen.width}x${screen.height}_${window.devicePixelRatio}_${new Date().getTimezoneOffset()}`
     const connectionTimestamp = performance.now().toString().replace('.', '')
-    const cryptoArray = window.crypto.getRandomValues(new Uint32Array(6))
-    const extraRandomness = `${Math.random()}_${Date.now()}_${performance.now()}_${Math.random().toString(36).substr(2, 12)}`
+    const cryptoArray = window.crypto.getRandomValues(new Uint32Array(8))
+    const extraRandomness = `${Math.random()}_${Date.now()}_${performance.now()}_${Math.random().toString(36).substr(2, 15)}_${Math.random().toString(36).substr(2, 15)}`
     
-    const clientId = `client_${windowUniqueId}_${connectionUniqueId}_${Date.now()}_${connectionTimestamp}_${cryptoArray.join('_')}_${tabSpecificEntropy.replace(/[^a-zA-Z0-9]/g, '')}_${extraRandomness.replace(/[^a-zA-Z0-9_]/g, '')}_${browserFingerprint.replace(/[^a-zA-Z0-9]/g, '')}`
+    const tabUniqueTimestamp = `${Date.now()}_${performance.now()}_${Math.random()}_${window.crypto.getRandomValues(new Uint32Array(1))[0]}`
+    
+    const clientId = `client_${windowUniqueId}_${connectionUniqueId}_${tabUniqueTimestamp}_${connectionTimestamp}_${cryptoArray.join('_')}_${tabSpecificEntropy.replace(/[^a-zA-Z0-9]/g, '')}_${extraRandomness.replace(/[^a-zA-Z0-9_]/g, '')}_${browserFingerprint.replace(/[^a-zA-Z0-9]/g, '')}`
     const uniqueWsUrl = `${wsBaseUrl}/${roomId}?clientId=${clientId}`
     console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
     console.log('[DEBUG] Client ID:', clientId)
@@ -93,7 +95,12 @@ function App() {
     console.log('[DEBUG] Room ID:', roomId)
     console.log('[DEBUG] Window Unique ID:', windowUniqueId)
     console.log('[DEBUG] Tab Specific Entropy:', tabSpecificEntropy)
+    console.log('[DEBUG] Connection Unique ID:', connectionUniqueId)
+    console.log('[DEBUG] Connection Timestamp:', connectionTimestamp)
+    console.log('[DEBUG] Crypto Array:', cryptoArray)
+    console.log('[DEBUG] Extra Randomness:', extraRandomness)
     console.log('[DEBUG] Browser Fingerprint:', browserFingerprint)
+    console.log('[DEBUG] Window Properties - outerWidth:', window.outerWidth, 'outerHeight:', window.outerHeight, 'screenX:', window.screenX, 'screenY:', window.screenY, 'history.length:', window.history.length)
     
     let retryCount = 0
     const maxRetries = 3
@@ -883,8 +890,7 @@ function App() {
                       console.log('[CRITICAL] WebSocket URL:', wsRef.current?.url)
                       
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" +
-                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+                        const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
                         
                         const message = {
                           type: 'audio_data',
