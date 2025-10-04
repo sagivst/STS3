@@ -612,16 +612,32 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     
     try:
         print(f"[DEBUG] Starting message loop for websocket {id(websocket)}")
+        message_count = 0
         while True:
-            print(f"[DEBUG] Waiting for message from websocket {id(websocket)}")
-            data = await websocket.receive_text()
-            print(f"[CRITICAL] *** RAW MESSAGE RECEIVED ***")
-            print(f"[CRITICAL] Websocket {id(websocket)}, connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
-            print(f"[CRITICAL] Raw data (first 200 chars): {data[:200]}...")
-            print(f"[CRITICAL] Full message length: {len(data)} characters")
-            print(f"[CRITICAL] Message contains 'audio_data': {'audio_data' in data}")
-            print(f"[CRITICAL] Message contains 'request_latency': {'request_latency' in data}")
-            print(f"[CRITICAL] *** PARSING MESSAGE ***")
+            message_count += 1
+            print(f"[DEBUG] Waiting for message #{message_count} from websocket {id(websocket)}")
+            
+            try:
+                data = await websocket.receive_text()
+                print(f"[CRITICAL] *** RAW MESSAGE #{message_count} RECEIVED ***")
+                print(f"[CRITICAL] Websocket {id(websocket)}, connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
+                print(f"[CRITICAL] Raw data (first 200 chars): {data[:200]}...")
+                print(f"[CRITICAL] Full message length: {len(data)} characters")
+                print(f"[CRITICAL] Message contains 'audio_data': {'audio_data' in data}")
+                print(f"[CRITICAL] Message contains 'request_latency': {'request_latency' in data}")
+                print(f"[CRITICAL] Message contains 'heartbeat': {'heartbeat' in data}")
+                print(f"[CRITICAL] Message contains 'language_config': {'language_config' in data}")
+                
+                if len(data) > 1000:
+                    print(f"[CRITICAL] *** LARGE MESSAGE DETECTED ({len(data)} chars) - LIKELY AUDIO_DATA ***")
+                    print(f"[CRITICAL] Message preview: {data[:100]}...{data[-100:]}")
+                
+                print(f"[CRITICAL] *** PARSING MESSAGE ***")
+            except Exception as receive_error:
+                print(f"[CRITICAL] *** ERROR RECEIVING MESSAGE ***")
+                print(f"[CRITICAL] WebSocket {id(websocket)} receive error: {receive_error}")
+                print(f"[CRITICAL] WebSocket state: {websocket.client_state.value}")
+                continue
             
             try:
                 message = json.loads(data)
@@ -632,22 +648,29 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 
                 if message_type == "audio_data":
                     print(f"[CRITICAL] *** AUDIO_DATA MESSAGE DETECTED - SHOULD PROCESS ***")
-                    print(f"[CRITICAL] Websocket {id(websocket)} sent audio_data message")
+                    print(f"[CRITICAL] Websocket {id(websocket)} sent audio_data message #{message_count}")
                     print(f"[CRITICAL] Connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
                     print(f"[CRITICAL] User language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
                     print(f"[CRITICAL] Audio field present: {'audio' in message}")
                     if 'audio' in message:
                         print(f"[CRITICAL] Audio data length: {len(message['audio'])}")
                     print(f"[CRITICAL] Client info: {message.get('client_info', 'not provided')}")
+                    print(f"[CRITICAL] Timestamp: {message.get('timestamp', 'not provided')}")
+                    print(f"[CRITICAL] Routing debug: {message.get('routing_debug', 'not provided')}")
                     print(f"[CRITICAL] *** PROCEEDING TO AUDIO_DATA HANDLER ***")
                 elif message_type == "request_latency":
-                    print(f"[DEBUG] Processing request_latency message (normal)")
+                    print(f"[DEBUG] Processing request_latency message #{message_count} (normal)")
+                elif message_type == "heartbeat":
+                    print(f"[DEBUG] Processing heartbeat message #{message_count} (normal)")
                 else:
-                    print(f"[DEBUG] Processing message type: {message_type}")
+                    print(f"[DEBUG] Processing message type: {message_type} #{message_count}")
             except json.JSONDecodeError as e:
                 print(f"[CRITICAL] *** JSON DECODE ERROR ***")
                 print(f"[CRITICAL] Error: {e}")
-                print(f"[CRITICAL] Raw data: {data}")
+                print(f"[CRITICAL] Raw data length: {len(data)}")
+                print(f"[CRITICAL] Raw data preview: {data[:500]}...")
+                if len(data) > 500:
+                    print(f"[CRITICAL] Raw data suffix: ...{data[-500:]}")
                 continue
             
             if message_type == "heartbeat":
@@ -695,13 +718,15 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         print(f"[WARNING] Failed to send room status after language change to client {id(client)}: {e}")
             
             elif message_type == "audio_data":
-                print(f"[CRITICAL] *** REACHED AUDIO_DATA HANDLER - PROCESSING ***")
-                print(f"[DEBUG] Received audio_data message from websocket {id(websocket)}")
-                print(f"[DEBUG] Sender connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
-                print(f"[DEBUG] Sender language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
-                print(f"[DEBUG] Current room has {len(rooms.get(room_id, []))} clients: {[id(client) for client in rooms.get(room_id, [])]}")
-                print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
-                print(f"[DEBUG] *** AUDIO_DATA PROCESSING START ***")
+                print(f"[CRITICAL] *** REACHED AUDIO_DATA HANDLER - PROCESSING MESSAGE #{message_count} ***")
+                print(f"[CRITICAL] Received audio_data message from websocket {id(websocket)}")
+                print(f"[CRITICAL] Sender connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
+                print(f"[CRITICAL] Sender language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
+                print(f"[CRITICAL] Current room has {len(rooms.get(room_id, []))} clients: {[id(client) for client in rooms.get(room_id, [])]}")
+                print(f"[CRITICAL] WebSocket client_state: {websocket.client_state.value}")
+                print(f"[CRITICAL] Message timestamp: {message.get('timestamp', 'not provided')}")
+                print(f"[CRITICAL] Client info: {message.get('client_info', 'not provided')}")
+                print(f"[CRITICAL] *** AUDIO_DATA PROCESSING START ***")
                 try:
                     if "audio" not in message:
                         print(f"[DEBUG] ERROR: No audio field in message")
