@@ -353,51 +353,66 @@ function App() {
         
         const reader = new FileReader()
         reader.onloadend = () => {
-          const base64Audio = (reader.result as string).split(',')[1]
-          console.log(`[RECORD] 🔄 Converted to base64: ${base64Audio.length} characters`)
-          
-          let clientId = 'unknown'
           try {
-            if (wsRef.current?.url && typeof wsRef.current.url === 'string') {
-              const url = new URL(wsRef.current.url)
-              clientId = url.searchParams.get('clientId') || 'unknown'
-            } else {
-              console.log('[RECORD] ⚠️ WebSocket URL is invalid or missing, using fallback')
+            const base64Audio = (reader.result as string).split(',')[1]
+            console.log(`[RECORD] 🔄 Converted to base64: ${base64Audio.length} characters`)
+            
+            let clientId = 'unknown'
+            try {
+              if (wsRef.current?.url && typeof wsRef.current.url === 'string') {
+                const url = new URL(wsRef.current.url)
+                clientId = url.searchParams.get('clientId') || 'unknown'
+              } else {
+                console.log('[RECORD] ⚠️ WebSocket URL is invalid or missing, using fallback')
+                clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+              }
+            } catch (error) {
+              console.log('[RECORD] ⚠️ Failed to parse WebSocket URL for clientId, using fallback:', error)
               clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
             }
-          } catch (error) {
-            console.log('[RECORD] ⚠️ Failed to parse WebSocket URL for clientId, using fallback:', error)
-            clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-          }
-          
-          console.log(`[RECORD] 🎯 PREPARING REAL SPEECH audio_data MESSAGE`)
-          console.log(`[RECORD] Client ID: ${clientId}`)
-          console.log(`[RECORD] Language: ${userLanguage}`)
-          console.log(`[RECORD] Audio size: ${base64Audio.length} chars`)
-          console.log(`[RECORD] WebSocket state: ${wsRef.current?.readyState} (1=OPEN)`)
-          console.log(`[RECORD] Connected: ${isConnected}`)
-          
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            const audioMessage = {
-              type: 'audio_data',
-              audio: base64Audio,
-              language: userLanguage,
-              clientId: clientId,
-              client_info: `${userLanguage}_${clientId}_${Date.now()}`,
-              timestamp: Date.now(),
-              routing_debug: `from_${clientId}_lang_${userLanguage}`
-            }
             
-            console.log(`[WEBSOCKET] 🚀 SENDING REAL SPEECH audio_data MESSAGE`)
-            wsRef.current.send(JSON.stringify(audioMessage))
-            console.log(`[WEBSOCKET] ✅ REAL SPEECH audio_data message sent successfully!`)
-            console.log(`[WEBSOCKET] Message details: ${JSON.stringify(audioMessage).substring(0, 200)}...`)
-          } else {
-            console.log(`[WEBSOCKET] ❌ CRITICAL: WebSocket not open for real speech!`)
-            console.log(`[WEBSOCKET] State: ${wsRef.current?.readyState}, expected: 1 (OPEN)`)
-            console.log(`[WEBSOCKET] Connected flag: ${isConnected}`)
+            console.log(`[RECORD] 🎯 PREPARING REAL SPEECH audio_data MESSAGE`)
+            console.log(`[RECORD] Client ID: ${clientId}`)
+            console.log(`[RECORD] Language: ${userLanguage}`)
+            console.log(`[RECORD] Audio size: ${base64Audio.length} chars`)
+            console.log(`[RECORD] WebSocket state: ${wsRef.current?.readyState} (1=OPEN)`)
+            console.log(`[RECORD] Connected: ${isConnected}`)
+            console.log(`[RECORD] *** CRITICAL: REAL SPEECH AUDIO_DATA TRANSMISSION ATTEMPT ***`)
+            
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              const audioMessage = {
+                type: 'audio_data',
+                audio: base64Audio,
+                language: userLanguage,
+                clientId: clientId,
+                client_info: `${userLanguage}_${clientId}_${Date.now()}`,
+                timestamp: Date.now(),
+                routing_debug: `from_${clientId}_lang_${userLanguage}`
+              }
+              
+              console.log(`[WEBSOCKET] 🚀 SENDING REAL SPEECH audio_data MESSAGE`)
+              console.log(`[WEBSOCKET] *** THIS SHOULD APPEAR IN BACKEND LOGS ***`)
+              wsRef.current.send(JSON.stringify(audioMessage))
+              console.log(`[WEBSOCKET] ✅ REAL SPEECH audio_data message sent successfully!`)
+              console.log(`[WEBSOCKET] Message details: ${JSON.stringify(audioMessage).substring(0, 200)}...`)
+              console.log(`[WEBSOCKET] *** IF BACKEND SHOWS NO audio_data, WEBSOCKET TRANSMISSION FAILED ***`)
+            } else {
+              console.log(`[WEBSOCKET] ❌ CRITICAL: WebSocket not open for real speech!`)
+              console.log(`[WEBSOCKET] State: ${wsRef.current?.readyState}, expected: 1 (OPEN)`)
+              console.log(`[WEBSOCKET] Connected flag: ${isConnected}`)
+              console.log(`[WEBSOCKET] *** WEBSOCKET NOT READY - THIS IS THE PROBLEM ***`)
+            }
+          } catch (error) {
+            console.log(`[RECORD] ❌ CRITICAL ERROR in audio processing:`, error)
+            console.log(`[RECORD] Reader result type:`, typeof reader.result)
+            console.log(`[RECORD] Reader result length:`, reader.result?.toString().length || 0)
           }
         }
+        
+        reader.onerror = (error) => {
+          console.log(`[RECORD] ❌ FileReader error:`, error)
+        }
+        
         reader.readAsDataURL(audioBlob)
       }
       audioChunks.length = 0
@@ -491,14 +506,19 @@ function App() {
           console.log(`[VAD] 🎤 VOICE DETECTED! Level ${audioLevel} > ${VAD_THRESHOLD} - calling startRecording()`)
           console.log(`[VAD] Pre-startRecording state: stream=${!!audioStreamRef.current}, streamActive=${audioStreamRef.current?.active}, recording=${isRecordingRef.current}`)
           console.log(`[VAD] WebSocket state: ${wsRef.current?.readyState}, connected: ${isConnected}`)
+          console.log(`[VAD] WebSocket URL: ${wsRef.current?.url}`)
+          console.log(`[VAD] User language: ${userLanguage}`)
+          console.log(`[VAD] *** CALLING startRecording() FOR REAL SPEECH ***`)
           startRecording()
           console.log(`[VAD] Post-startRecording state: recording=${isRecordingRef.current}`)
+          console.log(`[VAD] MediaRecorder state: ${mediaRecorderRef.current?.state}`)
         } else {
           console.log(`[VAD] Voice continues, level: ${audioLevel}, already recording`)
         }
         lastVoiceTimeRef.current = Date.now()
       } else if (isRecordingRef.current && Date.now() - lastVoiceTimeRef.current > SILENCE_DURATION) {
         console.log(`[VAD] 🔇 SILENCE DETECTED! Level ${audioLevel} <= ${VAD_THRESHOLD} - calling stopRecording()`)
+        console.log(`[VAD] *** CALLING stopRecording() FOR REAL SPEECH ***`)
         stopRecording()
       }
       
