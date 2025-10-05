@@ -21,8 +21,9 @@ function App() {
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
+  const [microphoneReady, setMicrophoneReady] = useState(false)
   
-  const VAD_THRESHOLD = 12  // Reduced from 15 for better sensitivity
+  const VAD_THRESHOLD = 5   // Further reduced for better voice detection
   const SILENCE_DURATION = 800  // Reduced from 1000ms for faster response
   const PREBUFFER_DURATION = 500  // 500ms of pre-VAD audio
   const TIMESLICE_INTERVAL = 100  // 100ms chunks for consistent timing
@@ -435,7 +436,10 @@ function App() {
     const smoothingFactor = 0.3
     
     const checkAudioLevel = () => {
-      if (!analyser || audioContextRef.current?.state === 'closed') return
+      if (!analyser || audioContextRef.current?.state === 'closed') {
+        console.log('[DEBUG] Audio monitoring stopped - analyser or context unavailable')
+        return
+      }
       
       analyser.getByteFrequencyData(dataArray)
       
@@ -449,23 +453,27 @@ function App() {
       smoothedLevel = smoothedLevel * (1 - smoothingFactor) + rawLevel * smoothingFactor
       const audioLevel = Math.round(smoothedLevel)
       
-      console.log(`[DEBUG] Audio level: ${audioLevel} (raw: ${rawLevel}), VAD threshold: ${VAD_THRESHOLD}, Currently recording: ${isRecordingRef.current}`)
+      if (Math.random() < 0.033) {
+        console.log(`[DEBUG] Audio level: ${audioLevel} (raw: ${rawLevel}), VAD threshold: ${VAD_THRESHOLD}, Recording: ${isRecordingRef.current}, Stream active: ${audioStreamRef.current?.active}`)
+      }
       
       setAudioLevel(audioLevel)
       
       if (audioLevel > VAD_THRESHOLD) {
         if (!isRecordingRef.current) {
-          console.log('[DEBUG] Voice detected, starting recording with pre-buffer')
+          console.log(`[DEBUG] 🎤 Voice detected! Audio level ${audioLevel} > threshold ${VAD_THRESHOLD}, starting recording with pre-buffer`)
           startRecording()
         }
         lastVoiceTimeRef.current = Date.now()
       } else if (isRecordingRef.current && Date.now() - lastVoiceTimeRef.current > SILENCE_DURATION) {
-        console.log('[DEBUG] Silence detected, stopping recording')
+        console.log(`[DEBUG] 🔇 Silence detected, audio level ${audioLevel} <= threshold ${VAD_THRESHOLD}, stopping recording`)
         stopRecording()
       }
       
       if (audioStreamRef.current && audioStreamRef.current.active) {
         requestAnimationFrame(checkAudioLevel)
+      } else {
+        console.log('[DEBUG] Audio stream inactive, stopping monitoring')
       }
     }
     
@@ -691,7 +699,15 @@ function App() {
 
   const startContinuousAudioCapture = async () => {
     console.log('[DEBUG] Starting continuous audio capture')
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error('[ERROR] getUserMedia not supported in this browser')
+      setTranscript('Microphone not supported in this browser')
+      return
+    }
+    
     try {
+      console.log('[DEBUG] Requesting microphone permissions...')
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           sampleRate: 16000,
@@ -702,10 +718,25 @@ function App() {
         } 
       })
       
+      console.log('[DEBUG] Microphone access granted, stream active:', stream.active)
+      console.log('[DEBUG] Audio tracks:', stream.getAudioTracks().map(track => ({
+        label: track.label,
+        enabled: track.enabled,
+        readyState: track.readyState
+      })))
+      
       audioStreamRef.current = stream
       streamRef.current = stream
       
+      console.log('[DEBUG] Creating audio context...')
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      console.log('[DEBUG] Audio context state:', audioContext.state)
+      
+      if (audioContext.state === 'suspended') {
+        console.log('[DEBUG] Resuming suspended audio context...')
+        await audioContext.resume()
+      }
+      
       const analyser = audioContext.createAnalyser()
       const microphone = audioContext.createMediaStreamSource(stream)
       
@@ -716,23 +747,38 @@ function App() {
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      console.log('[DEBUG] Starting audio level monitoring')
+      console.log('[DEBUG] Audio pipeline setup complete, starting monitoring...')
       monitorAudioLevel()
+      setMicrophoneReady(true)
       
       console.log('[DEBUG] Continuous audio capture started successfully')
-      
-      setTranscript('Recording initialized. Speak to see transcription...')
+      setTranscript('🎤 Microphone ready. Speak loudly to see transcription...')
       
       cleanupRef.current = () => {
         console.log('[DEBUG] Cleaning up continuous audio capture')
-        stream.getTracks().forEach(track => track.stop())
+        stream.getTracks().forEach(track => {
+          console.log('[DEBUG] Stopping track:', track.label)
+          track.stop()
+        })
         audioContext.close()
         audioStreamRef.current = null
         streamRef.current = null
         isRecordingRef.current = false
       }
     } catch (error) {
-      console.error('[DEBUG] Error starting continuous audio capture:', error)
+      console.error('[ERROR] Failed to start continuous audio capture:', error)
+      
+      const err = error as any
+      if (err.name === 'NotAllowedError') {
+        setTranscript('❌ Microphone access denied. Please allow microphone permissions and refresh.')
+      } else if (err.name === 'NotFoundError') {
+        setTranscript('❌ No microphone found. Please connect a microphone and refresh.')
+      } else if (err.name === 'NotReadableError') {
+        setTranscript('❌ Microphone is being used by another application.')
+      } else {
+        setTranscript(`❌ Microphone error: ${err.message || 'Unknown error'}`)
+      }
+      
       console.log('[DEBUG] Sending fallback test_deepgram_stt message')
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
@@ -745,6 +791,27 @@ function App() {
 
   const getTotalLatency = () => {
     return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
+  }
+
+  const manualStartRecording = () => {
+    if (!microphoneReady) {
+      setTranscript('❌ Microphone not ready. Please wait for microphone access.')
+      return
+    }
+    
+    console.log('[DEBUG] Manual recording triggered - bypassing VAD')
+    if (!isRecordingRef.current) {
+      startRecording()
+      setTimeout(() => {
+        if (isRecordingRef.current) {
+          console.log('[DEBUG] Manual recording timeout - stopping after 5 seconds')
+          stopRecording()
+        }
+      }, 5000)
+    } else {
+      console.log('[DEBUG] Manual recording stop triggered')
+      stopRecording()
+    }
   }
 
   return (
@@ -874,6 +941,15 @@ function App() {
                     Test Azure TTS (Text → Speech)
                   </Button>
                   <Button 
+                    onClick={manualStartRecording}
+                    variant="outline"
+                    size="sm"
+                    className="w-full bg-blue-50 border-blue-200 hover:bg-blue-100"
+                    disabled={!microphoneReady}
+                  >
+                    {isVoiceActive ? '🔴 Stop Recording' : '🎤 Start Recording (5s)'}
+                  </Button>
+                  <Button 
                     onClick={() => {
                       console.log('[CRITICAL] *** MANUAL TEST BUTTON CLICKED ***')
                       const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
@@ -922,6 +998,11 @@ function App() {
               <CardTitle className="flex items-center gap-2">
                 <Mic className="h-5 w-5" />
                 Speech Meter
+                {audioStreamRef.current?.active && (
+                  <Badge variant="default" className="text-xs bg-green-100 text-green-800">
+                    🎤 Live
+                  </Badge>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -933,6 +1014,11 @@ function App() {
                   </Badge>
                 </div>
                 <Progress value={audioLevel} className="h-3" />
+                {audioLevel === 0 && isConnected && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    💡 Speak into your microphone to see audio levels
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
