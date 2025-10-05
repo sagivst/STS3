@@ -78,16 +78,14 @@ function App() {
     await new Promise(resolve => setTimeout(resolve, randomDelay))
     
     const windowUniqueId = crypto.randomUUID ? crypto.randomUUID() : `win_${Date.now()}_${Math.random()}_${performance.now()}`
-    const tabSpecificEntropy = `${window.outerWidth}_${window.outerHeight}_${window.screenX}_${window.screenY}_${window.history.length}_${window.innerWidth}_${window.innerHeight}`
+    const tabSpecificEntropy = `${window.outerWidth}_${window.outerHeight}_${window.screenX}_${window.screenY}_${window.history.length}`
     const connectionUniqueId = crypto.randomUUID ? crypto.randomUUID() : `conn_${Date.now()}_${Math.random()}_${performance.now()}`
     const browserFingerprint = `${navigator.userAgent.length}_${screen.width}x${screen.height}_${window.devicePixelRatio}_${new Date().getTimezoneOffset()}`
     const connectionTimestamp = performance.now().toString().replace('.', '')
-    const cryptoArray = window.crypto.getRandomValues(new Uint32Array(8))
-    const extraRandomness = `${Math.random()}_${Date.now()}_${performance.now()}_${Math.random().toString(36).substr(2, 15)}_${Math.random().toString(36).substr(2, 15)}`
+    const cryptoArray = window.crypto.getRandomValues(new Uint32Array(6))
+    const extraRandomness = `${Math.random()}_${Date.now()}_${performance.now()}_${Math.random().toString(36).substr(2, 12)}`
     
-    const tabUniqueTimestamp = `${Date.now()}_${performance.now()}_${Math.random()}_${window.crypto.getRandomValues(new Uint32Array(1))[0]}`
-    
-    const clientId = `client_${windowUniqueId}_${connectionUniqueId}_${tabUniqueTimestamp}_${connectionTimestamp}_${cryptoArray.join('_')}_${tabSpecificEntropy.replace(/[^a-zA-Z0-9]/g, '')}_${extraRandomness.replace(/[^a-zA-Z0-9_]/g, '')}_${browserFingerprint.replace(/[^a-zA-Z0-9]/g, '')}`
+    const clientId = `client_${windowUniqueId}_${connectionUniqueId}_${Date.now()}_${connectionTimestamp}_${cryptoArray.join('_')}_${tabSpecificEntropy.replace(/[^a-zA-Z0-9]/g, '')}_${extraRandomness.replace(/[^a-zA-Z0-9_]/g, '')}_${browserFingerprint.replace(/[^a-zA-Z0-9]/g, '')}`
     const uniqueWsUrl = `${wsBaseUrl}/${roomId}?clientId=${clientId}`
     console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
     console.log('[DEBUG] Client ID:', clientId)
@@ -95,12 +93,7 @@ function App() {
     console.log('[DEBUG] Room ID:', roomId)
     console.log('[DEBUG] Window Unique ID:', windowUniqueId)
     console.log('[DEBUG] Tab Specific Entropy:', tabSpecificEntropy)
-    console.log('[DEBUG] Connection Unique ID:', connectionUniqueId)
-    console.log('[DEBUG] Connection Timestamp:', connectionTimestamp)
-    console.log('[DEBUG] Crypto Array:', cryptoArray)
-    console.log('[DEBUG] Extra Randomness:', extraRandomness)
     console.log('[DEBUG] Browser Fingerprint:', browserFingerprint)
-    console.log('[DEBUG] Window Properties - outerWidth:', window.outerWidth, 'outerHeight:', window.outerHeight, 'screenX:', window.screenX, 'screenY:', window.screenY, 'history.length:', window.history.length)
     
     let retryCount = 0
     const maxRetries = 3
@@ -350,12 +343,11 @@ function App() {
           const base64Audio = (reader.result as string).split(',')[1]
           const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
           
-          const timestamp = Date.now()
-          
-          console.log('[CRITICAL] *** SENDING AUDIO_DATA MESSAGE ***')
-          console.log('[CRITICAL] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
-          console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState, 'URL:', wsRef.current?.url)
-          console.log('[CRITICAL] Audio data length:', base64Audio.length, 'bytes')
+          console.log('[DEBUG] Preparing audio_data message for asymmetric routing test')
+          console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
+          console.log('[DEBUG] Base64 audio length:', base64Audio.length)
+          console.log('[DEBUG] WebSocket state:', wsRef.current?.readyState)
+          console.log('[DEBUG] WebSocket URL:', wsRef.current?.url)
           
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             const audioMessage = {
@@ -363,23 +355,21 @@ function App() {
               audio: base64Audio,
               language: userLanguage,
               clientId: clientId,
-              timestamp: timestamp,
-              client_info: `${userLanguage}_${clientId}_${timestamp}`,
-              routing_debug: `from_${clientId}_lang_${userLanguage}_order_unknown`
+              client_info: `${userLanguage}_${clientId}_${Date.now()}`,
+              timestamp: Date.now(),
+              routing_debug: `from_${clientId}_lang_${userLanguage}`
             }
             
-            console.log('[CRITICAL] Message structure:', {
+            console.log('[DEBUG] Sending audio_data message:', {
               type: audioMessage.type,
-              language: audioMessage.language,
               clientId: audioMessage.clientId,
+              language: audioMessage.language,
               audioLength: audioMessage.audio.length,
-              timestamp: audioMessage.timestamp,
-              routing_debug: audioMessage.routing_debug
+              timestamp: audioMessage.timestamp
             })
             
             wsRef.current.send(JSON.stringify(audioMessage))
-            console.log('[CRITICAL] ✅ AUDIO_DATA MESSAGE SENT SUCCESSFULLY')
-            console.log('[CRITICAL] Sent from client:', clientId, 'Language:', userLanguage, 'Timestamp:', timestamp)
+            console.log('[DEBUG] Audio_data message sent successfully from client:', clientId)
           } else {
             console.log('[ERROR] WebSocket not open for client:', clientId, 'state:', wsRef.current?.readyState)
           }
@@ -893,7 +883,8 @@ function App() {
                       console.log('[CRITICAL] WebSocket URL:', wsRef.current?.url)
                       
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+                        const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" +
+                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
                         
                         const message = {
                           type: 'audio_data',
