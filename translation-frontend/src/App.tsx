@@ -41,6 +41,24 @@ function App() {
     isChainedTest: false
   })
 
+  const [pipelineLogs, setPipelineLogs] = useState<Array<{
+    timestamp: string;
+    step: string;
+    data: string;
+    type: 'audio_to_deepgram' | 'text_from_deepgram' | 'text_to_azure_tts' | 'audio_from_azure_tts';
+  }>>([])
+
+  const addPipelineLog = (step: string, data: string, type: 'audio_to_deepgram' | 'text_from_deepgram' | 'text_to_azure_tts' | 'audio_from_azure_tts') => {
+    const now = new Date()
+    const timestamp = now.toLocaleTimeString('en-US', { 
+      hour12: false, 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit'
+    }) + '.' + now.getMilliseconds().toString().padStart(3, '0')
+    setPipelineLogs(prev => [...prev.slice(-19), { timestamp, step, data, type }])
+  }
+
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -143,9 +161,11 @@ function App() {
           
           if (message.type === 'transcript') {
             console.log('[DEBUG] Received transcript:', message.text)
+            addPipelineLog('Text from Deepgram STT', message.text, 'text_from_deepgram')
             setTranscript(message.text)
           } else if (message.type === 'translated_audio') {
             console.log('[DEBUG] Received translated audio data')
+            addPipelineLog('Audio from Azure TTS', `Audio data: ${message.audio.length} chars`, 'audio_from_azure_tts')
             playTranslatedAudio(message.audio)
           } else if (message.type === 'latency_update') {
             console.log('[DEBUG] Received latency metrics:', message.metrics)
@@ -391,6 +411,7 @@ function App() {
               
               console.log(`[WEBSOCKET] 🚀 SENDING REAL SPEECH audio_data MESSAGE`)
               console.log(`[WEBSOCKET] *** THIS SHOULD APPEAR IN BACKEND LOGS ***`)
+              addPipelineLog('Audio to Deepgram STT', `Audio data: ${base64Audio.length} chars`, 'audio_to_deepgram')
               wsRef.current.send(JSON.stringify(audioMessage))
               console.log(`[WEBSOCKET] ✅ REAL SPEECH audio_data message sent successfully!`)
               console.log(`[WEBSOCKET] Message details: ${JSON.stringify(audioMessage).substring(0, 200)}...`)
@@ -950,18 +971,6 @@ function App() {
             
             {isConnected && (
               <div className="mt-4 space-y-3">
-                <Button 
-                  onClick={() => {
-                    console.log('[USER] Manual microphone start requested')
-                    startContinuousAudioCapture()
-                  }}
-                  variant="default"
-                  size="lg"
-                  className="w-full bg-green-600 hover:bg-green-700"
-                >
-                  🎤 Start Microphone
-                </Button>
-                
                 <h3 className="text-sm font-medium text-gray-700">Individual Service Tests</h3>
                 <div className="grid grid-cols-1 gap-2">
                   <Button 
@@ -1102,6 +1111,41 @@ function App() {
                 </div>
                 <div className="text-sm text-gray-600">Total</div>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Pipeline Activity Log</CardTitle>
+            <CardDescription>
+              Detailed timestamped log of translation pipeline activity
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-64 overflow-y-auto bg-gray-50 rounded-lg border p-3">
+              {pipelineLogs.length === 0 ? (
+                <p className="text-gray-500 italic text-sm">
+                  {isConnected ? "Waiting for pipeline activity..." : "Connect to room to start logging"}
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  {pipelineLogs.map((log, index) => (
+                    <div key={index} className="text-xs font-mono">
+                      <span className="text-gray-500">[{log.timestamp}]</span>
+                      <span className={`ml-2 font-semibold ${
+                        log.type === 'audio_to_deepgram' ? 'text-blue-600' :
+                        log.type === 'text_from_deepgram' ? 'text-green-600' :
+                        log.type === 'text_to_azure_tts' ? 'text-purple-600' :
+                        'text-orange-600'
+                      }`}>
+                        {log.step}:
+                      </span>
+                      <span className="ml-1 text-gray-700">{log.data}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
