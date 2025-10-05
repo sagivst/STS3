@@ -138,6 +138,11 @@ function App() {
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
               console.log('[DEBUG] Requesting room status for client:', clientId)
+              console.log('[DEBUG] Auto-starting microphone capture after connection')
+              startContinuousAudioCapture().catch(error => {
+                console.error('[DEBUG] Failed to auto-start microphone:', error)
+                addPipelineLog('Microphone Error', `Auto-start failed: ${error.message}`, 'audio_to_deepgram')
+              })
               ws.send(JSON.stringify({ type: 'request_room_status', clientId: clientId }))
             }
           }, 1000)
@@ -392,7 +397,12 @@ function App() {
     try {
       console.log('[DEBUG] Requesting microphone permissions...')
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 16000
+        }
       })
       
       console.log('[DEBUG] Microphone access granted, setting up audio monitoring')
@@ -601,7 +611,6 @@ function App() {
                   </>
                 )}
               </Button>
-              
             </div>
             
           </CardContent>
