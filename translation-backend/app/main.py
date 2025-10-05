@@ -645,8 +645,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 
                 await websocket.send_text(json.dumps({
                     "type": "language_config_updated",
-                    "language": message["language"],
-                    "previous_language": old_language
+                    "language": message["language"]
                 }))
                 
                 room_users = rooms.get(room_id, [])
@@ -665,7 +664,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         print(f"[WARNING] Failed to send room status after language change to client {id(client)}: {e}")
             
             elif message_type == "audio_data":
-                print(f"[CRITICAL] *** REACHED AUDIO_DATA HANDLER - PROCESSING MESSAGE #{message_count} ***")
+                print(f"[CRITICAL] *** REACHED AUDIO_DATA HANDLER - PROCESSING AUDIO MESSAGE ***")
                 print(f"[CRITICAL] Received audio_data message from websocket {id(websocket)}")
                 print(f"[CRITICAL] Sender connection order: {user_languages.get(websocket, {}).get('connection_order', 'unknown')}")
                 print(f"[CRITICAL] Sender language: {user_languages.get(websocket, {}).get('language', 'unknown')}")
