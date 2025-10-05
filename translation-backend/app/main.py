@@ -579,8 +579,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
     print(f"[DEBUG] WebSocket connected to room {room_id}, total connections: {len(rooms[room_id])}")
     print(f"[DEBUG] WebSocket ID: {websocket_id}, Connection order: {connection_order}")
     print(f"[DEBUG] WebSocket client_state: {websocket.client_state.value}")
+    
+    user_languages[websocket] = {
+        "language": "en",
+        "connection_order": connection_order,
+        "websocket_id": websocket_id,
+        "client_id": client_id,
+        "room_id": room_id
+    }
+    
     print(f"[CRITICAL] *** NEW CONNECTION ESTABLISHED ***")
     print(f"[CRITICAL] Room: {room_id}, WebSocket: {websocket_id}, Order: {connection_order}, Client: {client_id}")
+    print(f"[DEBUG] Initial user_languages entry created: {user_languages[websocket]}")
     print(f"[CRITICAL] Current room clients: {[id(client) for client in rooms[room_id]]}")
     print(f"[CRITICAL] Current user_languages keys: {[id(client) for client in user_languages.keys()]}")
     
@@ -682,16 +692,19 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 old_language = user_languages.get(websocket, {}).get("language", None)
                 old_connection_order = user_languages.get(websocket, {}).get("connection_order", "unknown")
                 old_client_id = user_languages.get(websocket, {}).get("client_id", "unknown")
+                old_room_id = user_languages.get(websocket, {}).get("room_id", "unknown")
                 new_client_id = message.get("clientId", old_client_id)
                 
                 user_languages[websocket] = {
                     "language": message["language"],
                     "connection_order": old_connection_order,
                     "websocket_id": id(websocket),
-                    "client_id": new_client_id
+                    "client_id": new_client_id,
+                    "room_id": old_room_id
                 }
                 
-                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for client {new_client_id}, websocket {id(websocket)}, connection order: {old_connection_order}")
+                print(f"[DEBUG] Language changed from {old_language} to {message['language']} for websocket {id(websocket)}, connection order: {old_connection_order}")
+                print(f"[DEBUG] Preserved connection tracking: order={old_connection_order}, client_id={new_client_id}, room_id={old_room_id}")
                 print(f"[DEBUG] WebSocket client_state after language change: {websocket.client_state.value}")
                 print(f"[DEBUG] Preserved connection order: {old_connection_order}")
                 print(f"[DEBUG] Current user_languages after language change: {[(id(client), data['language']) for client, data in user_languages.items()]}")
@@ -768,6 +781,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                         sender_connection_order = user_languages[websocket].get('connection_order', 'unknown')
                         
                         print(f"[DEBUG] Room has {len(room_clients)} clients, processing transcript: '{transcript}'")
+                        print(f"[DEBUG] Sender websocket ID: {id(websocket)}, connection order: {sender_connection_order}")
                         print(f"[CRITICAL] *** AUDIO ROUTING ANALYSIS ***")
                         print(f"[CRITICAL] Sender: Client {sender_client_id}, WebSocket {id(websocket)}, Order: {sender_connection_order}, Language: {user_lang}")
                         print(f"[CRITICAL] Room clients: {[id(client) for client in room_clients]}")
@@ -779,6 +793,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                             other_client_state = other_ws.client_state.value
                             is_sender = other_ws == websocket
                             
+                            print(f"[DEBUG] Checking client {i+1}/{len(room_clients)}, websocket ID: {other_websocket_id}")
+                            print(f"[DEBUG] Client state: {other_client_state}, is sender: {is_sender}")
                             print(f"[CRITICAL] Client {i+1}/{len(room_clients)}: {other_client_id}, WebSocket {other_websocket_id}")
                             print(f"[CRITICAL] - State: {other_client_state}, Is Sender: {is_sender}, Order: {other_connection_order}")
                             print(f"[CRITICAL] - In user_languages: {other_ws in user_languages}")
@@ -853,7 +869,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                                                         print(f"[DEBUG] Successfully sent translated audio ({user_lang}→{other_lang}) from order {user_languages[websocket].get('connection_order', 'unknown')} to order {user_languages[other_ws].get('connection_order', 'unknown')}")
                                                     else:
                                                         print(f"[WARNING] WebSocket not in connected state (state: {other_ws.client_state.value}), skipping audio transmission")
-                                                        print(f"[DEBUG] Target websocket details - ID: {id(other_ws)}, connection_order: {user_languages[other_ws].get('connection_order', 'unknown')}")
                                                 except Exception as send_error:
                                                     print(f"[ERROR] Failed to send translated audio to client {id(other_ws)}: {send_error}")
                                                     print(f"[DEBUG] Error details - Original: {user_lang}, Target: {other_lang}, Text: '{translated_text[:50]}...'")
