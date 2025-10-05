@@ -21,7 +21,6 @@ function App() {
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
-  const [microphoneReady, setMicrophoneReady] = useState(false)
   
   const VAD_THRESHOLD = 5   // Further reduced for better voice detection
   const SILENCE_DURATION = 800  // Reduced from 1000ms for faster response
@@ -801,7 +800,6 @@ function App() {
       
       console.log('[DEBUG] Audio pipeline setup complete, starting monitoring...')
       monitorAudioLevel()
-      setMicrophoneReady(true)
       
       console.log('[DEBUG] Continuous audio capture started successfully')
       setTranscript('🎤 Microphone ready. Speak loudly to see transcription...')
@@ -851,26 +849,6 @@ function App() {
     return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
   }
 
-  const manualStartRecording = () => {
-    if (!microphoneReady) {
-      setTranscript('❌ Microphone not ready. Please wait for microphone access.')
-      return
-    }
-    
-    console.log('[DEBUG] Manual recording triggered - bypassing VAD')
-    if (!isRecordingRef.current) {
-      startRecording()
-      setTimeout(() => {
-        if (isRecordingRef.current) {
-          console.log('[DEBUG] Manual recording timeout - stopping after 5 seconds')
-          stopRecording()
-        }
-      }, 5000)
-    } else {
-      console.log('[DEBUG] Manual recording stop triggered')
-      stopRecording()
-    }
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
@@ -972,6 +950,18 @@ function App() {
             
             {isConnected && (
               <div className="mt-4 space-y-3">
+                <Button 
+                  onClick={() => {
+                    console.log('[USER] Manual microphone start requested')
+                    startContinuousAudioCapture()
+                  }}
+                  variant="default"
+                  size="lg"
+                  className="w-full bg-green-600 hover:bg-green-700"
+                >
+                  🎤 Start Microphone
+                </Button>
+                
                 <h3 className="text-sm font-medium text-gray-700">Individual Service Tests</h3>
                 <div className="grid grid-cols-1 gap-2">
                   <Button 
@@ -991,81 +981,12 @@ function App() {
                     Test DeepL Translation (Text → Text)
                   </Button>
                   <Button 
-                    onClick={() => {
-                      console.log('[USER] 🎤 Manual microphone start requested')
-                      startContinuousAudioCapture()
-                    }}
-                    variant="outline"
-                    size="sm"
-                    className="w-full bg-green-50 border-green-200 hover:bg-green-100"
-                  >
-                    🎤 Start Microphone
-                  </Button>
-                  <Button 
                     onClick={testAzureTTS}
                     variant="outline"
                     size="sm"
                     className="w-full"
                   >
                     Test Azure TTS (Text → Speech)
-                  </Button>
-                  <Button 
-                    onClick={manualStartRecording}
-                    variant="outline"
-                    size="sm"
-                    className="w-full bg-blue-50 border-blue-200 hover:bg-blue-100"
-                    disabled={!microphoneReady}
-                  >
-                    {isVoiceActive ? '🔴 Stop Recording' : '🎤 Start Recording (5s)'}
-                  </Button>
-                  <Button 
-                    onClick={() => {
-                      console.log('[CRITICAL] *** MANUAL TEST BUTTON CLICKED ***')
-                      let clientId = 'unknown'
-                      try {
-                        if (wsRef.current?.url && typeof wsRef.current.url === 'string') {
-                          const url = new URL(wsRef.current.url)
-                          clientId = url.searchParams.get('clientId') || 'unknown'
-                        } else {
-                          console.log('[MANUAL] ⚠️ WebSocket URL is invalid or missing, using fallback')
-                          clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-                        }
-                      } catch (error) {
-                        console.log('[CRITICAL] Failed to parse WebSocket URL for clientId, using fallback')
-                        clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-                      }
-                      console.log('[CRITICAL] Manually triggering audio_data message for asymmetric routing test')
-                      console.log('[CRITICAL] Client ID:', clientId, 'Language:', userLanguage)
-                      console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState)
-                      console.log('[CRITICAL] WebSocket URL:', wsRef.current?.url)
-                      
-                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        const syntheticAudio = "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" +
-                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-                        
-                        const message = {
-                          type: 'audio_data',
-                          audio: syntheticAudio,
-                          language: userLanguage,
-                          clientId: clientId,
-                          client_info: `${userLanguage}_${clientId}_manual_test_${Date.now()}`
-                        };
-                        
-                        console.log('[CRITICAL] Sending message:', JSON.stringify(message).substring(0, 200) + '...')
-                        wsRef.current.send(JSON.stringify(message))
-                        console.log('[CRITICAL] *** MANUAL AUDIO_DATA MESSAGE SENT SUCCESSFULLY ***')
-                        console.log('[CRITICAL] Message sent from client:', clientId, 'Language:', userLanguage)
-                      } else {
-                        console.log('[CRITICAL] *** WEBSOCKET NOT OPEN FOR MANUAL TEST ***')
-                        console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState)
-                        console.log('[CRITICAL] Expected state: 1 (OPEN)')
-                      }
-                    }}
-                    variant="outline"
-                    size="sm"
-                    className="w-full bg-yellow-50 border-yellow-200 hover:bg-yellow-100"
-                  >
-                    🔧 Manual Audio_Data Test (Debug Routing)
                   </Button>
                 </div>
               </div>
