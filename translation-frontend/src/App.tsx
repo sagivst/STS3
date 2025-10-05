@@ -22,10 +22,6 @@ function App() {
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
   
-  const VAD_THRESHOLD = 5   // Further reduced for better voice detection
-  const SILENCE_DURATION = 800  // Reduced from 1000ms for faster response
-  const PREBUFFER_DURATION = 500  // 500ms of pre-VAD audio
-  const TIMESLICE_INTERVAL = 100  // 100ms chunks for consistent timing
   
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
@@ -35,11 +31,6 @@ function App() {
     azure_tts: 0
   })
   
-  const [chainedTestResults, setChainedTestResults] = useState({
-    transcribedText: '',
-    translatedText: '',
-    isChainedTest: false
-  })
 
   const [pipelineLogs, setPipelineLogs] = useState<Array<{
     timestamp: string;
@@ -66,8 +57,6 @@ function App() {
   const streamRef = useRef<MediaStream | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
   const audioStreamRef = useRef<MediaStream | null>(null)
-  const isRecordingRef = useRef<boolean>(false)
-  const lastVoiceTimeRef = useRef<number>(0)
   const preBufferRef = useRef<Blob[]>([])
   const preBufferRecorderRef = useRef<MediaRecorder | null>(null)
   const heartbeatIntervalRef = useRef<number | null>(null)
@@ -174,6 +163,8 @@ function App() {
             console.log('[DEBUG] Received room status:', message)
             setConnectedUsers(message.connected_users)
             setUserLanguages(message.user_languages)
+            console.log('[DEBUG] User connected to room, starting continuous audio capture automatically')
+            startContinuousAudioCapture()
           } else if (message.type === 'test_audio') {
             console.log('[DEBUG] Received test audio data')
             playTranslatedAudio(message.audio)
@@ -183,42 +174,13 @@ function App() {
             const messageText = message.message
             const latency = message.latency
             const totalTime = message.total_time || latency
-            const isChainedTest = message.chained_test
             
             setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
             
-            if (service === 'deepgram_stt' && isChainedTest) {
-              const transcription = message.result || ''
-              setChainedTestResults(prev => ({ ...prev, transcribedText: transcription }))
-              setTimeout(() => {
-                if (transcription.trim()) {
-                  testDeepLTranslation()
-                } else {
-                  setTranscript("STT test failed - no transcription to continue chain")
-                  setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
-                }
-              }, 1000)
-            } else if (service === 'deepl_translation' && isChainedTest) {
-              const translatedText = message.result || ''
-              setChainedTestResults(prev => ({ ...prev, translatedText: translatedText }))
-              setTimeout(() => {
-                if (translatedText.trim()) {
-                  testAzureTTS()
-                } else {
-                  setTranscript("Translation test failed - no translation to continue chain")
-                  setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
-                }
-              }, 1000)
-            } else if (service === 'azure_tts') {
+            if (service === 'azure_tts') {
               if (message.audio) {
                 console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
                 playTranslatedAudio(message.audio)
-              }
-              if (isChainedTest) {
-                setTimeout(() => {
-                  setTranscript("Chained test complete: STT → Translation → TTS")
-                  setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: false })
-                }, 2000)
               }
             }
           } else if (message.type === 'error') {
@@ -332,225 +294,9 @@ function App() {
     setAudioLevel(0)
   }
 
-  const startRecording = () => {
-    if (!audioStreamRef.current || isRecordingRef.current) {
-      console.log(`[RECORD] ❌ startRecording() BLOCKED - stream: ${!!audioStreamRef.current}, already recording: ${isRecordingRef.current}`)
-      return
-    }
-    
-    console.log('[RECORD] ✅ startRecording() called - creating MediaRecorder')
-    console.log(`[RECORD] Stream tracks: ${audioStreamRef.current.getTracks().length}, active tracks: ${audioStreamRef.current.getTracks().filter(t => t.enabled).length}`)
-    console.log(`[RECORD] WebSocket ready: ${wsRef.current?.readyState === WebSocket.OPEN}, connected: ${isConnected}`)
-    
-    const mediaRecorder = new MediaRecorder(audioStreamRef.current, {
-      mimeType: 'audio/webm;codecs=opus',
-      audioBitsPerSecond: 128000
-    })
-    
-    const audioChunks: Blob[] = []
-    
-    if (preBufferRef.current.length > 0) {
-      console.log('[DEBUG] Including', preBufferRef.current.length, 'pre-buffered chunks')
-      audioChunks.push(...preBufferRef.current)
-      preBufferRef.current = []
-    }
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data)
-        console.log(`[RECORD] 📦 Audio chunk received: ${event.data.size} bytes (total chunks: ${audioChunks.length})`)
-      } else {
-        console.log('[RECORD] ⚠️ Empty audio chunk received')
-      }
-    }
-    
-    mediaRecorder.onstop = () => {
-      console.log(`[RECORD] 🛑 MediaRecorder stopped - processing ${audioChunks.length} chunks`)
-      if (audioChunks.length > 0) {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
-        console.log(`[RECORD] 📄 Created audio blob: ${audioBlob.size} bytes`)
-        
-        const reader = new FileReader()
-        reader.onloadend = () => {
-          try {
-            const base64Audio = (reader.result as string).split(',')[1]
-            console.log(`[RECORD] 🔄 Converted to base64: ${base64Audio.length} characters`)
-            
-            let clientId = 'unknown'
-            try {
-              if (wsRef.current?.url && typeof wsRef.current.url === 'string') {
-                const url = new URL(wsRef.current.url)
-                clientId = url.searchParams.get('clientId') || 'unknown'
-              } else {
-                console.log('[RECORD] ⚠️ WebSocket URL is invalid or missing, using fallback')
-                clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-              }
-            } catch (error) {
-              console.log('[RECORD] ⚠️ Failed to parse WebSocket URL for clientId, using fallback:', error)
-              clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-            }
-            
-            console.log(`[RECORD] 🎯 PREPARING REAL SPEECH audio_data MESSAGE`)
-            console.log(`[RECORD] Client ID: ${clientId}`)
-            console.log(`[RECORD] Language: ${userLanguage}`)
-            console.log(`[RECORD] Audio size: ${base64Audio.length} chars`)
-            console.log(`[RECORD] WebSocket state: ${wsRef.current?.readyState} (1=OPEN)`)
-            console.log(`[RECORD] Connected: ${isConnected}`)
-            console.log(`[RECORD] *** CRITICAL: REAL SPEECH AUDIO_DATA TRANSMISSION ATTEMPT ***`)
-            
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              const audioMessage = {
-                type: 'audio_data',
-                audio: base64Audio,
-                language: userLanguage,
-                clientId: clientId,
-                client_info: `${userLanguage}_${clientId}_${Date.now()}`,
-                timestamp: Date.now(),
-                routing_debug: `from_${clientId}_lang_${userLanguage}`
-              }
-              
-              console.log(`[WEBSOCKET] 🚀 SENDING REAL SPEECH audio_data MESSAGE`)
-              console.log(`[WEBSOCKET] *** THIS SHOULD APPEAR IN BACKEND LOGS ***`)
-              addPipelineLog('Audio to Deepgram STT', `Audio data: ${base64Audio.length} chars`, 'audio_to_deepgram')
-              wsRef.current.send(JSON.stringify(audioMessage))
-              console.log(`[WEBSOCKET] ✅ REAL SPEECH audio_data message sent successfully!`)
-              console.log(`[WEBSOCKET] Message details: ${JSON.stringify(audioMessage).substring(0, 200)}...`)
-              console.log(`[WEBSOCKET] *** IF BACKEND SHOWS NO audio_data, WEBSOCKET TRANSMISSION FAILED ***`)
-            } else {
-              console.log(`[WEBSOCKET] ❌ CRITICAL: WebSocket not open for real speech!`)
-              console.log(`[WEBSOCKET] State: ${wsRef.current?.readyState}, expected: 1 (OPEN)`)
-              console.log(`[WEBSOCKET] Connected flag: ${isConnected}`)
-              console.log(`[WEBSOCKET] *** WEBSOCKET NOT READY - THIS IS THE PROBLEM ***`)
-            }
-          } catch (error) {
-            console.log(`[RECORD] ❌ CRITICAL ERROR in audio processing:`, error)
-            console.log(`[RECORD] Reader result type:`, typeof reader.result)
-            console.log(`[RECORD] Reader result length:`, reader.result?.toString().length || 0)
-          }
-        }
-        
-        reader.onerror = (error) => {
-          console.log(`[RECORD] ❌ FileReader error:`, error)
-        }
-        
-        reader.readAsDataURL(audioBlob)
-      }
-      audioChunks.length = 0
-    }
-    
-    mediaRecorderRef.current = mediaRecorder
-    isRecordingRef.current = true
-    setIsVoiceActive(true)
-    
-    mediaRecorder.start(TIMESLICE_INTERVAL)
-    console.log(`[RECORD] 🎬 MediaRecorder started for continuous capture with ${TIMESLICE_INTERVAL}ms timeslice`)
-    console.log(`[RECORD] 🎯 REAL SPEECH RECORDING INITIATED - waiting for audio chunks...`)
-  }
   
-  const stopRecording = () => {
-    if (!mediaRecorderRef.current || !isRecordingRef.current) {
-      console.log(`[RECORD] ⚠️ stopRecording() called but no active recording - recorder: ${!!mediaRecorderRef.current}, recording: ${isRecordingRef.current}`)
-      return
-    }
-    
-    console.log('[RECORD] 🛑 Stopping MediaRecorder - processing real speech audio')
-    mediaRecorderRef.current.stop()
-    isRecordingRef.current = false
-    setIsVoiceActive(false)
-  }
 
-  const startPreBuffering = () => {
-    if (!audioStreamRef.current || preBufferRecorderRef.current) return
-    
-    console.log('[DEBUG] Starting pre-buffer recording')
-    const preBufferRecorder = new MediaRecorder(audioStreamRef.current, {
-      mimeType: 'audio/webm;codecs=opus',
-      audioBitsPerSecond: 128000
-    })
-    
-    preBufferRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        preBufferRef.current.push(event.data)
-        
-        const maxChunks = Math.ceil(PREBUFFER_DURATION / TIMESLICE_INTERVAL)
-        if (preBufferRef.current.length > maxChunks) {
-          preBufferRef.current = preBufferRef.current.slice(-maxChunks)
-        }
-      }
-    }
-    
-    preBufferRecorderRef.current = preBufferRecorder
-    preBufferRecorder.start(TIMESLICE_INTERVAL)
-  }
 
-  const monitorAudioLevel = () => {
-    if (!analyserRef.current || !audioContextRef.current) return
-    
-    const analyser = analyserRef.current
-    const bufferLength = analyser.frequencyBinCount
-    const dataArray = new Uint8Array(bufferLength)
-    
-    console.log('[DEBUG] Audio level monitoring started')
-    
-    startPreBuffering()
-    
-    let smoothedLevel = 0
-    const smoothingFactor = 0.3
-    
-    const checkAudioLevel = () => {
-      if (!analyser || audioContextRef.current?.state === 'closed') {
-        console.log('[DEBUG] Audio monitoring stopped - analyser or context unavailable')
-        return
-      }
-      
-      analyser.getByteFrequencyData(dataArray)
-      
-      let sum = 0
-      for (let i = 0; i < bufferLength; i++) {
-        sum += dataArray[i] * dataArray[i]
-      }
-      const rms = Math.sqrt(sum / bufferLength)
-      const rawLevel = Math.round((rms / 255) * 100)
-      
-      smoothedLevel = smoothedLevel * (1 - smoothingFactor) + rawLevel * smoothingFactor
-      const audioLevel = Math.round(smoothedLevel)
-      
-      if (Math.random() < 0.033) {
-        console.log(`[VAD] Audio level: ${audioLevel} (raw: ${rawLevel}), threshold: ${VAD_THRESHOLD}, recording: ${isRecordingRef.current}, stream active: ${audioStreamRef.current?.active}`)
-      }
-      
-      setAudioLevel(audioLevel)
-      
-      if (audioLevel > VAD_THRESHOLD) {
-        if (!isRecordingRef.current) {
-          console.log(`[VAD] 🎤 VOICE DETECTED! Level ${audioLevel} > ${VAD_THRESHOLD} - calling startRecording()`)
-          console.log(`[VAD] Pre-startRecording state: stream=${!!audioStreamRef.current}, streamActive=${audioStreamRef.current?.active}, recording=${isRecordingRef.current}`)
-          console.log(`[VAD] WebSocket state: ${wsRef.current?.readyState}, connected: ${isConnected}`)
-          console.log(`[VAD] WebSocket URL: ${wsRef.current?.url}`)
-          console.log(`[VAD] User language: ${userLanguage}`)
-          console.log(`[VAD] *** CALLING startRecording() FOR REAL SPEECH ***`)
-          startRecording()
-          console.log(`[VAD] Post-startRecording state: recording=${isRecordingRef.current}`)
-          console.log(`[VAD] MediaRecorder state: ${mediaRecorderRef.current?.state}`)
-        } else {
-          console.log(`[VAD] Voice continues, level: ${audioLevel}, already recording`)
-        }
-        lastVoiceTimeRef.current = Date.now()
-      } else if (isRecordingRef.current && Date.now() - lastVoiceTimeRef.current > SILENCE_DURATION) {
-        console.log(`[VAD] 🔇 SILENCE DETECTED! Level ${audioLevel} <= ${VAD_THRESHOLD} - calling stopRecording()`)
-        console.log(`[VAD] *** CALLING stopRecording() FOR REAL SPEECH ***`)
-        stopRecording()
-      }
-      
-      if (audioStreamRef.current && audioStreamRef.current.active) {
-        requestAnimationFrame(checkAudioLevel)
-      } else {
-        console.log('[DEBUG] Audio stream inactive, stopping monitoring')
-      }
-    }
-    
-    checkAudioLevel()
-  }
 
 
 
@@ -618,135 +364,6 @@ function App() {
     }
   }
 
-  const testDeepgramSTT = async () => {
-    if (!wsRef.current || !isConnected) return
-    
-    const startTime = Date.now()
-    setChainedTestResults({ transcribedText: '', translatedText: '', isChainedTest: true })
-    setTranscript("Starting Deepgram STT test...")
-    
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      })
-      let mimeType = 'audio/webm;codecs=opus'
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        console.warn('[DEBUG] Opus codec not supported, trying WebM without codec specification')
-        mimeType = 'audio/webm'
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          console.warn('[DEBUG] WebM not supported, falling back to MP4 - may cause transcription issues')
-          mimeType = 'audio/mp4'
-        }
-      }
-      console.log('[DEBUG] Selected mimeType for MediaRecorder:', mimeType)
-      
-      const mediaRecorder = new MediaRecorder(stream, { mimeType })
-      const audioChunks: Blob[] = []
-      
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data)
-      }
-      
-      mediaRecorder.onstop = async () => {
-        const actualMimeType = mediaRecorder.mimeType
-        const audioBlob = new Blob(audioChunks, { type: actualMimeType })
-        const arrayBuffer = await audioBlob.arrayBuffer()
-        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-        
-        wsRef.current?.send(JSON.stringify({
-          type: "test_deepgram_stt",
-          audio: base64Audio,
-          mimeType: actualMimeType,
-          test_start_time: startTime,
-          chained_test: true
-        }))
-        
-        stream.getTracks().forEach(track => track.stop())
-      }
-      
-      mediaRecorder.start()
-      setTranscript("Recording 3 seconds for STT test... Speak now!")
-      setTimeout(() => mediaRecorder.stop(), 3000)
-      
-    } catch (error) {
-      console.error('Error testing Deepgram STT:', error)
-      setTranscript(`Microphone access failed, testing with synthetic audio...`)
-      
-      wsRef.current?.send(JSON.stringify({
-        type: "test_deepgram_stt",
-        test_start_time: startTime,
-        chained_test: true
-      }))
-    }
-  }
-
-  const testDeepLTranslation = () => {
-    if (!wsRef.current || !isConnected) return
-    
-    const startTime = Date.now()
-    let testText: string
-    let sourceLanguage: string
-    let targetLang: string
-    
-    if (chainedTestResults.transcribedText) {
-      testText = chainedTestResults.transcribedText
-      sourceLanguage = userLanguage
-      targetLang = userLanguage === "en" ? "ja" : "en"
-      setTranscript(`Testing DeepL translation with Deepgram result: "${testText}" (${sourceLanguage} → ${targetLang})`)
-    } else {
-      if (userLanguage === "ja") {
-        testText = "こんにちは、これは翻訳のためのテストメッセージです。"
-        sourceLanguage = "ja"
-        targetLang = "en"
-      } else {
-        testText = "Hello, this is a test message for translation."
-        sourceLanguage = "en"
-        targetLang = "ja"
-      }
-      setChainedTestResults({ transcribedText: testText, translatedText: '', isChainedTest: true })
-      setTranscript(`Testing DeepL translation with fallback text: "${testText}" (${sourceLanguage} → ${targetLang})`)
-    }
-    
-    wsRef.current.send(JSON.stringify({
-      type: "test_deepl_translation",
-      text: testText,
-      source_language: sourceLanguage,
-      target_language: targetLang,
-      test_start_time: startTime,
-      chained_test: true
-    }))
-  }
-
-  const testAzureTTS = () => {
-    if (!wsRef.current || !isConnected) return
-    
-    const startTime = Date.now()
-    let testText: string
-    let language: string
-    
-    if (chainedTestResults.translatedText) {
-      testText = chainedTestResults.translatedText
-      language = "ja"
-      setTranscript(`Testing Azure TTS with DeepL result: "${testText}" (${language})`)
-    } else {
-      testText = "これはAzure Text-to-Speechサービスのテストです。"
-      language = "ja"
-      setChainedTestResults(prev => ({ ...prev, translatedText: testText, isChainedTest: true }))
-      setTranscript(`Testing Azure TTS with fallback Japanese text: "${testText}" (${language})`)
-    }
-    
-    wsRef.current.send(JSON.stringify({
-      type: "test_azure_tts",
-      text: testText,
-      language: language,
-      test_start_time: startTime,
-      chained_test: true
-    }))
-  }
 
   useEffect(() => {
     updateLanguageConfig()
@@ -762,112 +379,129 @@ function App() {
     return () => clearInterval(interval)
   }, [isConnected])
 
-  useEffect(() => {
-    if (isConnected) {
-      console.log('[DEBUG] User connected to room, starting continuous audio capture automatically')
-      startContinuousAudioCapture()
-    }
-  }, [isConnected])
+
+
+  const getTotalLatency = () => {
+    return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
+  }
 
   const startContinuousAudioCapture = async () => {
-    console.log('[DEBUG] Starting continuous audio capture')
-    
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      console.error('[ERROR] getUserMedia not supported in this browser')
-      setTranscript('Microphone not supported in this browser')
-      return
-    }
+    console.log('[DEBUG] Manual microphone activation requested')
+    addPipelineLog('Microphone Activation', 'User requested microphone access', 'audio_to_deepgram')
     
     try {
       console.log('[DEBUG] Requesting microphone permissions...')
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        } 
+        audio: true
       })
       
-      console.log('[DEBUG] Microphone access granted, stream active:', stream.active)
-      console.log('[DEBUG] Audio tracks:', stream.getAudioTracks().map(track => ({
-        label: track.label,
-        enabled: track.enabled,
-        readyState: track.readyState
-      })))
+      console.log('[DEBUG] Microphone access granted, setting up audio monitoring')
+      addPipelineLog('Microphone Access', 'Microphone permissions granted', 'audio_to_deepgram')
       
       audioStreamRef.current = stream
-      streamRef.current = stream
       
-      console.log('[DEBUG] Creating audio context...')
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
-      console.log('[DEBUG] Audio context state:', audioContext.state)
-      
-      if (audioContext.state === 'suspended') {
-        console.log('[DEBUG] Resuming suspended audio context...')
-        await audioContext.resume()
-      }
-      
+      const audioContext = new AudioContext({ sampleRate: 16000 })
       const analyser = audioContext.createAnalyser()
       const microphone = audioContext.createMediaStreamSource(stream)
       
+      analyser.fftSize = 256
       analyser.smoothingTimeConstant = 0.8
-      analyser.fftSize = 1024
       microphone.connect(analyser)
       
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      console.log('[DEBUG] Audio pipeline setup complete, starting monitoring...')
-      monitorAudioLevel()
-      
-      console.log('[DEBUG] Continuous audio capture started successfully')
-      setTranscript('🎤 Microphone ready. Speak loudly to see transcription...')
-      
-      cleanupRef.current = () => {
-        console.log('[DEBUG] Cleaning up continuous audio capture')
-        stream.getTracks().forEach(track => {
-          console.log('[DEBUG] Stopping track:', track.label)
-          track.stop()
-        })
-        if (audioContext.state !== 'closed') {
-          try {
-            audioContext.close()
-          } catch (error) {
-            console.log('[DEBUG] Error closing AudioContext:', error)
-          }
+      const monitorAudio = () => {
+        if (!analyserRef.current || !audioStreamRef.current) return
+        
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+        analyserRef.current.getByteFrequencyData(dataArray)
+        
+        const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
+        const normalizedLevel = Math.floor(average / 25.5)
+        
+        setAudioLevel(normalizedLevel)
+        
+        if (normalizedLevel > 5 && wsRef.current?.readyState === WebSocket.OPEN) {
+          console.log('[VAD] Voice detected, starting recording for real speech transmission')
+          addPipelineLog('Voice Detection', `Audio level: ${normalizedLevel}`, 'audio_to_deepgram')
+          startRealSpeechRecording()
         }
-        audioStreamRef.current = null
-        streamRef.current = null
-        isRecordingRef.current = false
+        
+        if (audioStreamRef.current && audioStreamRef.current.active) {
+          requestAnimationFrame(monitorAudio)
+        }
       }
+      
+      monitorAudio()
+      console.log('[DEBUG] Audio monitoring started successfully')
+      addPipelineLog('Audio Monitoring', 'Real-time audio level monitoring active', 'audio_to_deepgram')
+      
     } catch (error) {
       console.error('[ERROR] Failed to start continuous audio capture:', error)
-      
-      const err = error as any
-      if (err.name === 'NotAllowedError') {
-        setTranscript('❌ Microphone access denied. Please allow microphone permissions and refresh.')
-      } else if (err.name === 'NotFoundError') {
-        setTranscript('❌ No microphone found. Please connect a microphone and refresh.')
-      } else if (err.name === 'NotReadableError') {
-        setTranscript('❌ Microphone is being used by another application.')
-      } else {
-        setTranscript(`❌ Microphone error: ${err.message || 'Unknown error'}`)
-      }
-      
-      console.log('[DEBUG] Sending fallback test_deepgram_stt message')
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'test_deepgram_stt',
-          language: userLanguage
-        }))
-      }
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      addPipelineLog('Microphone Error', `Failed to access microphone: ${errorMessage}`, 'audio_to_deepgram')
+      setTranscript('❌ No microphone found. Please connect a microphone and refresh.')
     }
   }
 
-  const getTotalLatency = () => {
-    return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
+  const startRealSpeechRecording = () => {
+    if (!audioStreamRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log('[RECORD] Cannot start recording - missing stream or WebSocket')
+      return
+    }
+    
+    console.log('[RECORD] Starting real speech recording')
+    addPipelineLog('Recording Start', 'Capturing audio for transcription', 'audio_to_deepgram')
+    
+    const mediaRecorder = new MediaRecorder(audioStreamRef.current, {
+      mimeType: 'audio/webm;codecs=opus',
+      audioBitsPerSecond: 128000
+    })
+    
+    const audioChunks: Blob[] = []
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data)
+        console.log(`[RECORD] Audio chunk: ${event.data.size} bytes`)
+      }
+    }
+    
+    mediaRecorder.onstop = () => {
+      if (audioChunks.length > 0) {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
+        console.log(`[RECORD] Processing ${audioBlob.size} bytes of audio`)
+        addPipelineLog('Audio Processing', `Processing ${audioBlob.size} bytes`, 'audio_to_deepgram')
+        
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          const base64Audio = (reader.result as string).split(',')[1]
+          
+          const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          const audioMessage = {
+            type: 'audio_data',
+            audio: base64Audio,
+            language: userLanguage,
+            clientId: clientId,
+            timestamp: Date.now()
+          }
+          
+          console.log('[WEBSOCKET] Sending real speech audio_data message')
+          addPipelineLog('Audio Transmission', `Sending ${base64Audio.length} chars to Deepgram`, 'audio_to_deepgram')
+          wsRef.current?.send(JSON.stringify(audioMessage))
+        }
+        
+        reader.readAsDataURL(audioBlob)
+      }
+    }
+    
+    mediaRecorder.start()
+    setTimeout(() => {
+      if (mediaRecorder.state === 'recording') {
+        mediaRecorder.stop()
+      }
+    }, 3000)
   }
 
 
@@ -967,39 +601,9 @@ function App() {
                   </>
                 )}
               </Button>
+              
             </div>
             
-            {isConnected && (
-              <div className="mt-4 space-y-3">
-                <h3 className="text-sm font-medium text-gray-700">Individual Service Tests</h3>
-                <div className="grid grid-cols-1 gap-2">
-                  <Button 
-                    onClick={testDeepgramSTT}
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                  >
-                    Test Deepgram STT (Record & Transcribe)
-                  </Button>
-                  <Button 
-                    onClick={testDeepLTranslation}
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                  >
-                    Test DeepL Translation (Text → Text)
-                  </Button>
-                  <Button 
-                    onClick={testAzureTTS}
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                  >
-                    Test Azure TTS (Text → Speech)
-                  </Button>
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
 
