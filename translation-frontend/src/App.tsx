@@ -310,9 +310,12 @@ function App() {
   }
 
   const startRecording = () => {
-    if (!audioStreamRef.current || isRecordingRef.current) return
+    if (!audioStreamRef.current || isRecordingRef.current) {
+      console.log(`[RECORD] startRecording() blocked - stream: ${!!audioStreamRef.current}, already recording: ${isRecordingRef.current}`)
+      return
+    }
     
-    console.log('[DEBUG] Starting MediaRecorder for continuous capture with pre-buffer')
+    console.log('[RECORD] ✅ startRecording() called - creating MediaRecorder')
     const mediaRecorder = new MediaRecorder(audioStreamRef.current, {
       mimeType: 'audio/webm;codecs=opus',
       audioBitsPerSecond: 128000
@@ -329,20 +332,33 @@ function App() {
     mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
         audioChunks.push(event.data)
-        console.log('[DEBUG] Audio chunk received, size:', event.data.size)
+        console.log(`[RECORD] 📦 Audio chunk received: ${event.data.size} bytes (total chunks: ${audioChunks.length})`)
+      } else {
+        console.log('[RECORD] ⚠️ Empty audio chunk received')
       }
     }
     
     mediaRecorder.onstop = () => {
-      console.log('[DEBUG] MediaRecorder stopped, processing audio chunks')
+      console.log(`[RECORD] 🛑 MediaRecorder stopped - processing ${audioChunks.length} chunks`)
       if (audioChunks.length > 0) {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
-        console.log('[DEBUG] Created audio blob with pre-buffer, size:', audioBlob.size)
+        console.log(`[RECORD] 📄 Created audio blob: ${audioBlob.size} bytes`)
         
         const reader = new FileReader()
         reader.onloadend = () => {
           const base64Audio = (reader.result as string).split(',')[1]
-          const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
+          console.log(`[RECORD] 🔄 Converted to base64: ${base64Audio.length} characters`)
+          
+          let clientId = 'unknown'
+          try {
+            if (wsRef.current?.url) {
+              const url = new URL(wsRef.current.url)
+              clientId = url.searchParams.get('clientId') || 'unknown'
+            }
+          } catch (error) {
+            console.log('[RECORD] ⚠️ Failed to parse WebSocket URL for clientId, using fallback')
+            clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          }
           
           console.log('[DEBUG] Preparing audio_data message for asymmetric routing test')
           console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
@@ -370,9 +386,9 @@ function App() {
             })
             
             wsRef.current.send(JSON.stringify(audioMessage))
-            console.log('[DEBUG] Audio_data message sent successfully from client:', clientId)
+            console.log(`[WEBSOCKET] 📤 audio_data message sent successfully - ${base64Audio.length} chars to ${clientId}`)
           } else {
-            console.log('[ERROR] WebSocket not open for client:', clientId, 'state:', wsRef.current?.readyState)
+            console.log(`[WEBSOCKET] ❌ WebSocket not open! State: ${wsRef.current?.readyState}, expected: 1 (OPEN)`)
           }
         }
         reader.readAsDataURL(audioBlob)
@@ -385,13 +401,16 @@ function App() {
     setIsVoiceActive(true)
     
     mediaRecorder.start(TIMESLICE_INTERVAL)
-    console.log('[DEBUG] MediaRecorder started for continuous capture with', TIMESLICE_INTERVAL, 'ms timeslice')
+    console.log(`[RECORD] 🎬 MediaRecorder started for continuous capture with ${TIMESLICE_INTERVAL}ms timeslice`)
   }
   
   const stopRecording = () => {
-    if (!mediaRecorderRef.current || !isRecordingRef.current) return
+    if (!mediaRecorderRef.current || !isRecordingRef.current) {
+      console.log(`[RECORD] stopRecording() blocked - recorder: ${!!mediaRecorderRef.current}, recording: ${isRecordingRef.current}`)
+      return
+    }
     
-    console.log('[DEBUG] Stopping MediaRecorder for continuous capture')
+    console.log('[RECORD] 🛑 Stopping MediaRecorder for continuous capture')
     mediaRecorderRef.current.stop()
     isRecordingRef.current = false
     setIsVoiceActive(false)
@@ -453,20 +472,26 @@ function App() {
       smoothedLevel = smoothedLevel * (1 - smoothingFactor) + rawLevel * smoothingFactor
       const audioLevel = Math.round(smoothedLevel)
       
-      if (Math.random() < 0.033) {
-        console.log(`[DEBUG] Audio level: ${audioLevel} (raw: ${rawLevel}), VAD threshold: ${VAD_THRESHOLD}, Recording: ${isRecordingRef.current}, Stream active: ${audioStreamRef.current?.active}`)
+      if (Math.random() < 0.1) {
+        console.log(`[VAD] Audio level: ${audioLevel} (raw: ${rawLevel}), threshold: ${VAD_THRESHOLD}, recording: ${isRecordingRef.current}, stream active: ${audioStreamRef.current?.active}`)
       }
       
       setAudioLevel(audioLevel)
       
       if (audioLevel > VAD_THRESHOLD) {
         if (!isRecordingRef.current) {
-          console.log(`[DEBUG] 🎤 Voice detected! Audio level ${audioLevel} > threshold ${VAD_THRESHOLD}, starting recording with pre-buffer`)
+          console.log(`[VAD] 🎤 VOICE DETECTED! Level ${audioLevel} > ${VAD_THRESHOLD} - calling startRecording()`)
+          console.log(`[VAD] Pre-startRecording state: stream=${!!audioStreamRef.current}, streamActive=${audioStreamRef.current?.active}, recording=${isRecordingRef.current}`)
           startRecording()
+          console.log(`[VAD] Post-startRecording state: recording=${isRecordingRef.current}`)
+        } else {
+          if (Math.random() < 0.05) { // Log occasionally to avoid spam
+            console.log(`[VAD] Voice continues, level: ${audioLevel}, already recording`)
+          }
         }
         lastVoiceTimeRef.current = Date.now()
       } else if (isRecordingRef.current && Date.now() - lastVoiceTimeRef.current > SILENCE_DURATION) {
-        console.log(`[DEBUG] 🔇 Silence detected, audio level ${audioLevel} <= threshold ${VAD_THRESHOLD}, stopping recording`)
+        console.log(`[VAD] 🔇 SILENCE DETECTED! Level ${audioLevel} <= ${VAD_THRESHOLD} - calling stopRecording()`)
         stopRecording()
       }
       
@@ -760,7 +785,9 @@ function App() {
           console.log('[DEBUG] Stopping track:', track.label)
           track.stop()
         })
-        audioContext.close()
+        if (audioContext.state !== 'closed') {
+          audioContext.close()
+        }
         audioStreamRef.current = null
         streamRef.current = null
         isRecordingRef.current = false
@@ -952,7 +979,16 @@ function App() {
                   <Button 
                     onClick={() => {
                       console.log('[CRITICAL] *** MANUAL TEST BUTTON CLICKED ***')
-                      const clientId = new URL(wsRef.current?.url || '').searchParams.get('clientId') || 'unknown'
+                      let clientId = 'unknown'
+                      try {
+                        if (wsRef.current?.url) {
+                          const url = new URL(wsRef.current.url)
+                          clientId = url.searchParams.get('clientId') || 'unknown'
+                        }
+                      } catch (error) {
+                        console.log('[CRITICAL] Failed to parse WebSocket URL for clientId, using fallback')
+                        clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+                      }
                       console.log('[CRITICAL] Manually triggering audio_data message for asymmetric routing test')
                       console.log('[CRITICAL] Client ID:', clientId, 'Language:', userLanguage)
                       console.log('[CRITICAL] WebSocket state:', wsRef.current?.readyState)
