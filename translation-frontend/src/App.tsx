@@ -299,8 +299,12 @@ function App() {
       cleanupRef.current = null
     }
     
-    if (audioContextRef.current) {
-      audioContextRef.current.close()
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try {
+        audioContextRef.current.close()
+      } catch (error) {
+        console.log('[DEBUG] AudioContext already closed or error closing:', error)
+      }
       audioContextRef.current = null
     }
     
@@ -311,11 +315,14 @@ function App() {
 
   const startRecording = () => {
     if (!audioStreamRef.current || isRecordingRef.current) {
-      console.log(`[RECORD] startRecording() blocked - stream: ${!!audioStreamRef.current}, already recording: ${isRecordingRef.current}`)
+      console.log(`[RECORD] ❌ startRecording() BLOCKED - stream: ${!!audioStreamRef.current}, already recording: ${isRecordingRef.current}`)
       return
     }
     
     console.log('[RECORD] ✅ startRecording() called - creating MediaRecorder')
+    console.log(`[RECORD] Stream tracks: ${audioStreamRef.current.getTracks().length}, active tracks: ${audioStreamRef.current.getTracks().filter(t => t.enabled).length}`)
+    console.log(`[RECORD] WebSocket ready: ${wsRef.current?.readyState === WebSocket.OPEN}, connected: ${isConnected}`)
+    
     const mediaRecorder = new MediaRecorder(audioStreamRef.current, {
       mimeType: 'audio/webm;codecs=opus',
       audioBitsPerSecond: 128000
@@ -351,20 +358,24 @@ function App() {
           
           let clientId = 'unknown'
           try {
-            if (wsRef.current?.url) {
+            if (wsRef.current?.url && typeof wsRef.current.url === 'string') {
               const url = new URL(wsRef.current.url)
               clientId = url.searchParams.get('clientId') || 'unknown'
+            } else {
+              console.log('[RECORD] ⚠️ WebSocket URL is invalid or missing, using fallback')
+              clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
             }
           } catch (error) {
-            console.log('[RECORD] ⚠️ Failed to parse WebSocket URL for clientId, using fallback')
+            console.log('[RECORD] ⚠️ Failed to parse WebSocket URL for clientId, using fallback:', error)
             clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
           }
           
-          console.log('[DEBUG] Preparing audio_data message for asymmetric routing test')
-          console.log('[DEBUG] Client ID:', clientId, 'Language:', userLanguage, 'Room:', roomId)
-          console.log('[DEBUG] Base64 audio length:', base64Audio.length)
-          console.log('[DEBUG] WebSocket state:', wsRef.current?.readyState)
-          console.log('[DEBUG] WebSocket URL:', wsRef.current?.url)
+          console.log(`[RECORD] 🎯 PREPARING REAL SPEECH audio_data MESSAGE`)
+          console.log(`[RECORD] Client ID: ${clientId}`)
+          console.log(`[RECORD] Language: ${userLanguage}`)
+          console.log(`[RECORD] Audio size: ${base64Audio.length} chars`)
+          console.log(`[RECORD] WebSocket state: ${wsRef.current?.readyState} (1=OPEN)`)
+          console.log(`[RECORD] Connected: ${isConnected}`)
           
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             const audioMessage = {
@@ -377,18 +388,14 @@ function App() {
               routing_debug: `from_${clientId}_lang_${userLanguage}`
             }
             
-            console.log('[DEBUG] Sending audio_data message:', {
-              type: audioMessage.type,
-              clientId: audioMessage.clientId,
-              language: audioMessage.language,
-              audioLength: audioMessage.audio.length,
-              timestamp: audioMessage.timestamp
-            })
-            
+            console.log(`[WEBSOCKET] 🚀 SENDING REAL SPEECH audio_data MESSAGE`)
             wsRef.current.send(JSON.stringify(audioMessage))
-            console.log(`[WEBSOCKET] 📤 audio_data message sent successfully - ${base64Audio.length} chars to ${clientId}`)
+            console.log(`[WEBSOCKET] ✅ REAL SPEECH audio_data message sent successfully!`)
+            console.log(`[WEBSOCKET] Message details: ${JSON.stringify(audioMessage).substring(0, 200)}...`)
           } else {
-            console.log(`[WEBSOCKET] ❌ WebSocket not open! State: ${wsRef.current?.readyState}, expected: 1 (OPEN)`)
+            console.log(`[WEBSOCKET] ❌ CRITICAL: WebSocket not open for real speech!`)
+            console.log(`[WEBSOCKET] State: ${wsRef.current?.readyState}, expected: 1 (OPEN)`)
+            console.log(`[WEBSOCKET] Connected flag: ${isConnected}`)
           }
         }
         reader.readAsDataURL(audioBlob)
@@ -402,15 +409,16 @@ function App() {
     
     mediaRecorder.start(TIMESLICE_INTERVAL)
     console.log(`[RECORD] 🎬 MediaRecorder started for continuous capture with ${TIMESLICE_INTERVAL}ms timeslice`)
+    console.log(`[RECORD] 🎯 REAL SPEECH RECORDING INITIATED - waiting for audio chunks...`)
   }
   
   const stopRecording = () => {
     if (!mediaRecorderRef.current || !isRecordingRef.current) {
-      console.log(`[RECORD] stopRecording() blocked - recorder: ${!!mediaRecorderRef.current}, recording: ${isRecordingRef.current}`)
+      console.log(`[RECORD] ⚠️ stopRecording() called but no active recording - recorder: ${!!mediaRecorderRef.current}, recording: ${isRecordingRef.current}`)
       return
     }
     
-    console.log('[RECORD] 🛑 Stopping MediaRecorder for continuous capture')
+    console.log('[RECORD] 🛑 Stopping MediaRecorder - processing real speech audio')
     mediaRecorderRef.current.stop()
     isRecordingRef.current = false
     setIsVoiceActive(false)
@@ -472,7 +480,7 @@ function App() {
       smoothedLevel = smoothedLevel * (1 - smoothingFactor) + rawLevel * smoothingFactor
       const audioLevel = Math.round(smoothedLevel)
       
-      if (Math.random() < 0.1) {
+      if (Math.random() < 0.033) {
         console.log(`[VAD] Audio level: ${audioLevel} (raw: ${rawLevel}), threshold: ${VAD_THRESHOLD}, recording: ${isRecordingRef.current}, stream active: ${audioStreamRef.current?.active}`)
       }
       
@@ -482,12 +490,11 @@ function App() {
         if (!isRecordingRef.current) {
           console.log(`[VAD] 🎤 VOICE DETECTED! Level ${audioLevel} > ${VAD_THRESHOLD} - calling startRecording()`)
           console.log(`[VAD] Pre-startRecording state: stream=${!!audioStreamRef.current}, streamActive=${audioStreamRef.current?.active}, recording=${isRecordingRef.current}`)
+          console.log(`[VAD] WebSocket state: ${wsRef.current?.readyState}, connected: ${isConnected}`)
           startRecording()
           console.log(`[VAD] Post-startRecording state: recording=${isRecordingRef.current}`)
         } else {
-          if (Math.random() < 0.05) { // Log occasionally to avoid spam
-            console.log(`[VAD] Voice continues, level: ${audioLevel}, already recording`)
-          }
+          console.log(`[VAD] Voice continues, level: ${audioLevel}, already recording`)
         }
         lastVoiceTimeRef.current = Date.now()
       } else if (isRecordingRef.current && Date.now() - lastVoiceTimeRef.current > SILENCE_DURATION) {
@@ -786,7 +793,11 @@ function App() {
           track.stop()
         })
         if (audioContext.state !== 'closed') {
-          audioContext.close()
+          try {
+            audioContext.close()
+          } catch (error) {
+            console.log('[DEBUG] Error closing AudioContext:', error)
+          }
         }
         audioStreamRef.current = null
         streamRef.current = null
@@ -960,6 +971,17 @@ function App() {
                     Test DeepL Translation (Text → Text)
                   </Button>
                   <Button 
+                    onClick={() => {
+                      console.log('[USER] 🎤 Manual microphone start requested')
+                      startContinuousAudioCapture()
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="w-full bg-green-50 border-green-200 hover:bg-green-100"
+                  >
+                    🎤 Start Microphone
+                  </Button>
+                  <Button 
                     onClick={testAzureTTS}
                     variant="outline"
                     size="sm"
@@ -981,9 +1003,12 @@ function App() {
                       console.log('[CRITICAL] *** MANUAL TEST BUTTON CLICKED ***')
                       let clientId = 'unknown'
                       try {
-                        if (wsRef.current?.url) {
+                        if (wsRef.current?.url && typeof wsRef.current.url === 'string') {
                           const url = new URL(wsRef.current.url)
                           clientId = url.searchParams.get('clientId') || 'unknown'
+                        } else {
+                          console.log('[MANUAL] ⚠️ WebSocket URL is invalid or missing, using fallback')
+                          clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
                         }
                       } catch (error) {
                         console.log('[CRITICAL] Failed to parse WebSocket URL for clientId, using fallback')
