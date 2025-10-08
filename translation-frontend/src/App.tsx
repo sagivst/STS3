@@ -564,7 +564,7 @@ function App() {
     const testText = "Hello, this is a test message for translation."
     const targetLang = userLanguage === "en" ? "ja" : "en"
     
-    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} → ${targetLang})`)
+    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} to ${targetLang})`)
     
     wsRef.current.send(JSON.stringify({
       type: "test_deepl_translation",
@@ -700,7 +700,7 @@ function App() {
                     size="sm"
                     className="w-full"
                   >
-                    Test Deepgram STT (Record & Transcribe)
+                    Test Deepgram STT (Record and Transcribe)
                   </Button>
                   <Button 
                     onClick={testDeepLTranslation}
@@ -708,7 +708,7 @@ function App() {
                     size="sm"
                     className="w-full"
                   >
-                    Test DeepL Translation (Text → Text)
+                    Test DeepL Translation (Text to Text)
                   </Button>
                   <Button 
                     onClick={testAzureTTS}
@@ -716,7 +716,7 @@ function App() {
                     size="sm"
                     className="w-full"
                   >
-                    Test Azure TTS (Text → Speech)
+                    Test Azure TTS (Text to Speech)
                   </Button>
                 </div>
               </div>
