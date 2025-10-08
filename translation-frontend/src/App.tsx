@@ -17,12 +17,10 @@ function App() {
   const [roomId, setRoomId] = useState('default-room')
   const [userLanguage, setUserLanguage] = useState('en')
   const [isConnected, setIsConnected] = useState(false)
-  const [isVoiceActive, setIsVoiceActive] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [audioLevel, setAudioLevel] = useState(0)
   const [outputLevel, setOutputLevel] = useState(0)
-  
-  
   const [connectedUsers, setConnectedUsers] = useState(0)
   const [userLanguages, setUserLanguages] = useState<string[]>([])
   const [latencyMetrics, setLatencyMetrics] = useState<LatencyMetrics>({
@@ -30,25 +28,6 @@ function App() {
     deepl: 0,
     azure_tts: 0
   })
-  
-
-  const [pipelineLogs, setPipelineLogs] = useState<Array<{
-    timestamp: string;
-    step: string;
-    data: string;
-    type: 'audio_to_deepgram' | 'text_from_deepgram' | 'text_to_azure_tts' | 'audio_from_azure_tts';
-  }>>([])
-
-  const addPipelineLog = (step: string, data: string, type: 'audio_to_deepgram' | 'text_from_deepgram' | 'text_to_azure_tts' | 'audio_from_azure_tts') => {
-    const now = new Date()
-    const timestamp = now.toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      second: '2-digit'
-    }) + '.' + now.getMilliseconds().toString().padStart(3, '0')
-    setPipelineLogs(prev => [...prev.slice(-19), { timestamp, step, data, type }])
-  }
 
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -56,11 +35,6 @@ function App() {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
-  const audioStreamRef = useRef<MediaStream | null>(null)
-  const preBufferRef = useRef<Blob[]>([])
-  const preBufferRecorderRef = useRef<MediaRecorder | null>(null)
-  const heartbeatIntervalRef = useRef<number | null>(null)
-  const isRecordingRef = useRef(false)
 
   const languages = [
     { code: 'en', name: 'English' },
@@ -72,208 +46,162 @@ function App() {
   ]
 
   const connectToRoom = async () => {
-    if (isConnected) return
-    
-    if (wsRef.current) {
-      console.log('[DEBUG] Closing existing WebSocket connection')
-      wsRef.current.close()
-      wsRef.current = null
-    }
-    
-    const wsBaseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8001'
-    
-    const randomDelay = Math.floor(Math.random() * 500) + Math.random() * 300
-    await new Promise(resolve => setTimeout(resolve, randomDelay))
-    
-    const windowUniqueId = crypto.randomUUID ? crypto.randomUUID() : `win_${Date.now()}_${Math.random()}_${performance.now()}`
-    const tabSpecificEntropy = `${window.outerWidth}_${window.outerHeight}_${window.screenX}_${window.screenY}_${window.history.length}`
-    const connectionUniqueId = crypto.randomUUID ? crypto.randomUUID() : `conn_${Date.now()}_${Math.random()}_${performance.now()}`
-    const browserFingerprint = `${navigator.userAgent.length}_${screen.width}x${screen.height}_${window.devicePixelRatio}_${new Date().getTimezoneOffset()}`
-    const connectionTimestamp = performance.now().toString().replace('.', '')
-    const cryptoArray = window.crypto.getRandomValues(new Uint32Array(6))
-    const extraRandomness = `${Math.random()}_${Date.now()}_${performance.now()}_${Math.random().toString(36).substr(2, 12)}`
-    
-    const clientId = `client_${windowUniqueId}_${connectionUniqueId}_${Date.now()}_${connectionTimestamp}_${cryptoArray.join('_')}_${tabSpecificEntropy.replace(/[^a-zA-Z0-9]/g, '')}_${extraRandomness.replace(/[^a-zA-Z0-9_]/g, '')}_${browserFingerprint.replace(/[^a-zA-Z0-9]/g, '')}`
-    const uniqueWsUrl = `${wsBaseUrl}/${roomId}?clientId=${clientId}`
-    console.log('[DEBUG] Attempting to connect to WebSocket URL:', uniqueWsUrl)
-    console.log('[DEBUG] Client ID:', clientId)
-    console.log('[DEBUG] User Language:', userLanguage)
-    console.log('[DEBUG] Room ID:', roomId)
-    console.log('[DEBUG] Window Unique ID:', windowUniqueId)
-    console.log('[DEBUG] Tab Specific Entropy:', tabSpecificEntropy)
-    console.log('[DEBUG] Browser Fingerprint:', browserFingerprint)
-    
-    let retryCount = 0
-    const maxRetries = 3
-    const retryDelay = 2000
-    
-    const attemptConnection = () => {
-      try {
-        const ws = new WebSocket(uniqueWsUrl)
-        console.log('[DEBUG] Created new WebSocket instance with unique URL')
-        wsRef.current = ws
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://')
+      const ws = new WebSocket(`${wsUrl}/ws/${roomId}`)
+      
+      ws.onopen = () => {
+        setIsConnected(true)
+        ws.send(JSON.stringify({
+          type: 'language_config',
+          language: userLanguage
+        }))
+      }
+
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data)
+        console.log('[DEBUG] Received WebSocket message:', message.type, message)
         
-        ws.onopen = () => {
-          console.log('[DEBUG] WebSocket connection established for client:', clientId)
-          console.log('[DEBUG] WebSocket readyState:', ws.readyState)
-          console.log('[DEBUG] WebSocket URL:', ws.url)
-          console.log('[DEBUG] WebSocket protocol:', ws.protocol)
-          console.log('[DEBUG] WebSocket extensions:', ws.extensions)
-          setIsConnected(true)
-          retryCount = 0
+        if (message.type === 'transcript') {
+          console.log('[DEBUG] Setting transcript:', message.text)
+          setTranscript(message.text)
+        } else if (message.type === 'translated_audio') {
+          console.log('[DEBUG] Received translated audio, hex length:', message.audio?.length || 0)
+          playTranslatedAudio(message.audio)
+        } else if (message.type === 'latency_update') {
+          setLatencyMetrics(message.metrics)
+        } else if (message.type === 'room_status') {
+          setConnectedUsers(message.connected_users)
+          setUserLanguages(message.user_languages)
+        } else if (message.type === 'test_audio') {
+          console.log('[DEBUG] Received test audio, hex length:', message.audio?.length || 0)
+          playTranslatedAudio(message.audio)
+        } else if (message.type === 'test_result') {
+          console.log('[DEBUG] Received test result:', message)
+          const service = message.service
+          const messageText = message.message
+          const latency = message.latency
+          const totalTime = message.total_time || latency
           
-          const languageConfigMessage = {
-            type: 'language_config',
-            language: userLanguage,
-            clientId: clientId
-          }
-          console.log('[DEBUG] Sending language_config message:', languageConfigMessage)
-          ws.send(JSON.stringify(languageConfigMessage))
+          setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
           
-          heartbeatIntervalRef.current = window.setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'heartbeat', clientId: clientId }))
-            }
-          }, 30000)
-          
-          setTimeout(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              console.log('[DEBUG] Requesting room status for client:', clientId)
-              console.log('[DEBUG] Auto-starting microphone capture after connection')
-              startContinuousAudioCapture().catch(error => {
-                console.error('[DEBUG] Failed to auto-start microphone:', error)
-                addPipelineLog('Microphone Error', `Auto-start failed: ${error.message}`, 'audio_to_deepgram')
-              })
-              ws.send(JSON.stringify({ type: 'request_room_status', clientId: clientId }))
-            }
-          }, 1000)
-        }
-
-        ws.onmessage = (event) => {
-          console.log('[DEBUG] WebSocket message received:', event.data)
-          const message = JSON.parse(event.data)
-          console.log('[DEBUG] Parsed message type:', message.type)
-          
-          if (message.type === 'transcript') {
-            console.log('[DEBUG] Received transcript:', message.text)
-            addPipelineLog('Text from Deepgram STT', message.text, 'text_from_deepgram')
-            setTranscript(message.text)
-          } else if (message.type === 'translated_audio') {
-            console.log('[DEBUG] Received translated audio data')
-            addPipelineLog('Audio from Azure TTS', `Audio data: ${message.audio.length} chars`, 'audio_from_azure_tts')
+          if (service === 'azure_tts' && message.audio) {
+            console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
             playTranslatedAudio(message.audio)
-          } else if (message.type === 'latency_update') {
-            console.log('[DEBUG] Received latency metrics:', message.metrics)
-            setLatencyMetrics(message.metrics)
-          } else if (message.type === 'room_status') {
-            console.log('[DEBUG] Received room status:', message)
-            setConnectedUsers(message.connected_users)
-            setUserLanguages(message.user_languages)
-            console.log('[DEBUG] User connected to room, starting continuous audio capture automatically')
-            startContinuousAudioCapture()
-          } else if (message.type === 'test_audio') {
-            console.log('[DEBUG] Received test audio data')
-            playTranslatedAudio(message.audio)
-          } else if (message.type === 'test_result') {
-            console.log('[DEBUG] Received test result:', message)
-            const service = message.service
-            const messageText = message.message
-            const latency = message.latency
-            const totalTime = message.total_time || latency
-            
-            setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
-            
-            if (service === 'azure_tts') {
-              if (message.audio) {
-                console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
-                playTranslatedAudio(message.audio)
-              }
-            }
-          } else if (message.type === 'error') {
-            console.error('[DEBUG] Received error from backend:', message.message)
-            setTranscript(`Backend Error: ${message.message}`)
           }
-        }
-
-        ws.onclose = (event) => {
-          console.log('[DEBUG] WebSocket connection closed, code:', event.code, 'reason:', event.reason)
-          setIsConnected(false)
-          
-          if (heartbeatIntervalRef.current) {
-            clearInterval(heartbeatIntervalRef.current)
-            heartbeatIntervalRef.current = null
-          }
-          
-          if (event.code !== 1000 && event.code !== 1001 && retryCount < maxRetries) {
-            retryCount++
-            console.log(`[DEBUG] Attempting to reconnect (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
-            setTimeout(attemptConnection, retryDelay)
-          }
-        }
-
-        ws.onerror = (error) => {
-          console.error('[DEBUG] WebSocket error for client:', clientId, error)
-          console.error('[DEBUG] WebSocket state during error:', ws.readyState)
-          console.error('[DEBUG] WebSocket URL during error:', ws.url)
-          if (retryCount < maxRetries) {
-            retryCount++
-            console.log(`[DEBUG] Connection failed for client ${clientId}, retrying (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
-            setTimeout(attemptConnection, retryDelay)
-          } else {
-            console.error('[DEBUG] Max retries reached for client:', clientId, 'giving up')
-            setIsConnected(false)
-          }
-        }
-
-        wsRef.current = ws
-        
-      } catch (error) {
-        console.error('[DEBUG] Failed to connect:', error)
-        setIsConnected(false)
-        if (retryCount < maxRetries) {
-          retryCount++
-          console.log(`[DEBUG] Connection attempt failed, retrying (${retryCount}/${maxRetries}) in ${retryDelay}ms...`)
-          setTimeout(attemptConnection, retryDelay)
         }
       }
+
+      ws.onclose = () => {
+        setIsConnected(false)
+        setIsRecording(false)
+      }
+
+      wsRef.current = ws
+      startAudioCapture()
+      
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'request_room_status' }))
+          ws.send(JSON.stringify({ type: 'request_test_audio' }))
+        }
+      }, 1000)
+    } catch (error) {
+      console.error('Failed to connect:', error)
     }
-    
-    attemptConnection()
   }
 
   const disconnectFromRoom = () => {
-    console.log('[DEBUG] Disconnecting from room')
     if (wsRef.current) {
-      wsRef.current.close(1000, 'User disconnected')
+      wsRef.current.close()
       wsRef.current = null
     }
-    
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current)
-      heartbeatIntervalRef.current = null
-    }
-    
     stopAudioCapture()
     setIsConnected(false)
+    setIsRecording(false)
     setTranscript('')
   }
 
+  const startAudioCapture = async () => {
+    try {
+      console.log('[DEBUG] Requesting microphone access...')
+      
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('[DEBUG] getUserMedia not supported')
+        return
+      }
+      
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const audioInputs = devices.filter(device => device.kind === 'audioinput')
+        console.log('[DEBUG] Available audio input devices:', audioInputs.length)
+        audioInputs.forEach((device, index) => {
+          console.log(`[DEBUG] Device ${index}: ${device.label || 'Unknown'} (${device.deviceId})`)
+        })
+      } catch (deviceError) {
+        console.error('[DEBUG] Failed to enumerate devices:', deviceError)
+      }
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true
+      })
+      console.log('[DEBUG] Microphone access granted, stream:', stream)
+      streamRef.current = stream
+      
+      const audioContext = new AudioContext()
+      const analyser = audioContext.createAnalyser()
+      const source = audioContext.createMediaStreamSource(stream)
+      
+      analyser.fftSize = 256
+      source.connect(analyser)
+      
+      audioContextRef.current = audioContext
+      analyserRef.current = analyser
+      
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      })
+      console.log('[DEBUG] MediaRecorder created, mimeType:', mediaRecorder.mimeType)
+      mediaRecorderRef.current = mediaRecorder
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          console.log('[DEBUG] Audio data available, size:', event.data.size)
+          const reader = new FileReader()
+          reader.onload = () => {
+            const arrayBuffer = reader.result as ArrayBuffer
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+            console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
+            
+            wsRef.current?.send(JSON.stringify({
+              type: 'audio_data',
+              audio: base64
+            }))
+          }
+          reader.readAsArrayBuffer(event.data)
+        }
+      }
+      
+      mediaRecorder.start(1000)
+      setIsRecording(true)
+      console.log('[DEBUG] MediaRecorder started')
+      
+      const cleanup = monitorAudioLevel()
+      cleanupRef.current = cleanup
+    } catch (error) {
+      console.error('[DEBUG] Failed to start audio capture:', error)
+      if (error instanceof Error) {
+        console.error('[DEBUG] Error name:', error.name)
+        console.error('[DEBUG] Error message:', error.message)
+      }
+    }
+  }
 
   const stopAudioCapture = () => {
-    setIsVoiceActive(false)
-    
     if (mediaRecorderRef.current) {
-      if (mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop()
-      }
+      mediaRecorderRef.current.stop()
       mediaRecorderRef.current = null
-    }
-    
-    if (preBufferRecorderRef.current) {
-      if (preBufferRecorderRef.current.state === 'recording') {
-        preBufferRecorderRef.current.stop()
-      }
-      preBufferRecorderRef.current = null
     }
     
     if (streamRef.current) {
@@ -286,25 +214,39 @@ function App() {
       cleanupRef.current = null
     }
     
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      try {
-        audioContextRef.current.close()
-      } catch (error) {
-        console.log('[DEBUG] AudioContext already closed or error closing:', error)
-      }
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
       audioContextRef.current = null
     }
     
-    analyserRef.current = null
-    preBufferRef.current = []
+    setIsRecording(false)
     setAudioLevel(0)
   }
 
-  
-
-
-
-
+  const monitorAudioLevel = (): (() => void) | null => {
+    if (!analyserRef.current) return null
+    
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+    let animationId: number
+    
+    const updateLevel = () => {
+      if (!analyserRef.current) return
+      
+      analyserRef.current.getByteFrequencyData(dataArray)
+      const average = dataArray.reduce((a, b) => a + b) / dataArray.length
+      setAudioLevel(Math.min(100, (average / 128) * 100))
+      
+      animationId = requestAnimationFrame(updateLevel)
+    }
+    
+    updateLevel()
+    
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId)
+      }
+    }
+  }
 
   const playTranslatedAudio = async (hexAudio: string) => {
     console.log('[DEBUG] playTranslatedAudio called with hex length:', hexAudio?.length || 0)
@@ -370,153 +312,6 @@ function App() {
     }
   }
 
-
-  useEffect(() => {
-    updateLanguageConfig()
-  }, [userLanguage])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'request_latency' }))
-      }
-    }, 3000)
-
-    return () => clearInterval(interval)
-  }, [isConnected])
-
-
-
-  const getTotalLatency = () => {
-    return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
-  }
-
-  const startContinuousAudioCapture = async () => {
-    console.log('[DEBUG] Manual microphone activation requested')
-    addPipelineLog('Microphone Activation', 'User requested microphone access', 'audio_to_deepgram')
-    
-    try {
-      console.log('[DEBUG] Requesting microphone permissions...')
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 16000
-        }
-      })
-      
-      console.log('[DEBUG] Microphone access granted, setting up audio monitoring')
-      addPipelineLog('Microphone Access', 'Microphone permissions granted', 'audio_to_deepgram')
-      
-      audioStreamRef.current = stream
-      
-      const audioContext = new AudioContext({ sampleRate: 16000 })
-      const analyser = audioContext.createAnalyser()
-      const microphone = audioContext.createMediaStreamSource(stream)
-      
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.8
-      microphone.connect(analyser)
-      
-      audioContextRef.current = audioContext
-      analyserRef.current = analyser
-      
-      const monitorAudio = () => {
-        if (!analyserRef.current || !audioStreamRef.current) return
-        
-        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
-        analyserRef.current.getByteFrequencyData(dataArray)
-        
-        const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
-        const normalizedLevel = Math.floor(average / 25.5)
-        
-        setAudioLevel(normalizedLevel)
-        
-        if (normalizedLevel > 5 && wsRef.current?.readyState === WebSocket.OPEN && !isRecordingRef.current) {
-          console.log('[VAD] Voice detected, starting recording for real speech transmission')
-          addPipelineLog('Voice Detection', `Audio level: ${normalizedLevel}`, 'audio_to_deepgram')
-          isRecordingRef.current = true
-          startRealSpeechRecording()
-        }
-        
-        if (audioStreamRef.current && audioStreamRef.current.active) {
-          requestAnimationFrame(monitorAudio)
-        }
-      }
-      
-      monitorAudio()
-      console.log('[DEBUG] Audio monitoring started successfully')
-      addPipelineLog('Audio Monitoring', 'Real-time audio level monitoring active', 'audio_to_deepgram')
-      
-    } catch (error) {
-      console.error('[ERROR] Failed to start continuous audio capture:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      addPipelineLog('Microphone Error', `Failed to access microphone: ${errorMessage}`, 'audio_to_deepgram')
-      setTranscript('❌ No microphone found. Please connect a microphone and refresh.')
-    }
-  }
-
-  const startRealSpeechRecording = () => {
-    if (!audioStreamRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.log('[RECORD] Cannot start recording - missing stream or WebSocket')
-      return
-    }
-    
-    console.log('[RECORD] Starting real speech recording')
-    addPipelineLog('Recording Start', 'Capturing audio for transcription', 'audio_to_deepgram')
-    
-    const mediaRecorder = new MediaRecorder(audioStreamRef.current, {
-      mimeType: 'audio/webm;codecs=opus',
-      audioBitsPerSecond: 128000
-    })
-    
-    const audioChunks: Blob[] = []
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data)
-        console.log(`[RECORD] Audio chunk: ${event.data.size} bytes`)
-      }
-    }
-    
-    mediaRecorder.onstop = () => {
-      isRecordingRef.current = false
-      if (audioChunks.length > 0) {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
-        console.log(`[RECORD] Processing ${audioBlob.size} bytes of audio`)
-        addPipelineLog('Audio Processing', `Processing ${audioBlob.size} bytes`, 'audio_to_deepgram')
-        
-        const reader = new FileReader()
-        reader.onloadend = () => {
-          const base64Audio = (reader.result as string).split(',')[1]
-          
-          const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-          const audioMessage = {
-            type: 'audio_data',
-            audio: base64Audio,
-            language: userLanguage,
-            clientId: clientId,
-            timestamp: Date.now()
-          }
-          
-          console.log('[WEBSOCKET] Sending real speech audio_data message')
-          addPipelineLog('Audio Transmission', `Sending ${base64Audio.length} chars to Deepgram`, 'audio_to_deepgram')
-          wsRef.current?.send(JSON.stringify(audioMessage))
-        }
-        
-        reader.readAsDataURL(audioBlob)
-      }
-    }
-    
-    mediaRecorder.start()
-    setTimeout(() => {
-      if (mediaRecorder.state === 'recording') {
-        mediaRecorder.stop()
-      }
-    }, 3000)
-  }
-
   const testDeepgramSTT = async () => {
     if (!wsRef.current || !isConnected) return
     
@@ -564,7 +359,7 @@ function App() {
     const testText = "Hello, this is a test message for translation."
     const targetLang = userLanguage === "en" ? "ja" : "en"
     
-    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} to ${targetLang})`)
+    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} → ${targetLang})`)
     
     wsRef.current.send(JSON.stringify({
       type: "test_deepl_translation",
@@ -591,23 +386,43 @@ function App() {
     }))
   }
 
+  useEffect(() => {
+    updateLanguageConfig()
+  }, [userLanguage])
+
+  const testFunctions = {
+    testDeepgramSTT,
+    testDeepLTranslation,
+    testAzureTTS
+  }
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).testFunctions = testFunctions
+      console.log('Test functions loaded:', Object.keys(testFunctions))
+    }
+  }, [testFunctions])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'request_latency' }))
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [isConnected])
+
+  const getTotalLatency = () => {
+    return latencyMetrics.deepgram + latencyMetrics.deepl + latencyMetrics.azure_tts
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-4xl mx-auto space-y-6">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center mb-4">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1 mb-2">
-                <span className="text-6xl font-black text-gray-900 tracking-tight">STS</span>
-                <div className="w-8 h-8 border-2 border-gray-900 rounded-full flex items-center justify-center ml-2">
-                  <span className="text-sm font-bold text-gray-900">©</span>
-                </div>
-              </div>
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">Simultaneous Translation Sys</h1>
-              <p className="text-sm text-gray-600 font-medium">By Sagiv S.</p>
-            </div>
-          </div>
+        <div className="text-center">
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Simultaneous Translation</h1>
+          <p className="text-lg text-gray-600">Simultaneous Translation App</p>
         </div>
 
         <Card>
@@ -695,7 +510,45 @@ function App() {
                 <h3 className="text-sm font-medium text-gray-700">Individual Service Tests</h3>
                 <div className="grid grid-cols-1 gap-2">
                   <Button 
-                    onClick={testDeepgramSTT}
+                    onClick={async () => {
+                      if (!wsRef.current || !isConnected) return
+                      
+                      const startTime = Date.now()
+                      setTranscript("Starting Deepgram STT test...")
+                      
+                      try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                        const mediaRecorder = new MediaRecorder(stream)
+                        const audioChunks: Blob[] = []
+                        
+                        mediaRecorder.ondataavailable = (event) => {
+                          audioChunks.push(event.data)
+                        }
+                        
+                        mediaRecorder.onstop = async () => {
+                          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
+                          const arrayBuffer = await audioBlob.arrayBuffer()
+                          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+                          
+                          wsRef.current?.send(JSON.stringify({
+                            type: "test_deepgram_stt",
+                            audio: base64Audio,
+                            test_start_time: startTime
+                          }))
+                          
+                          stream.getTracks().forEach(track => track.stop())
+                        }
+                        
+                        mediaRecorder.start()
+                        setTranscript("Recording 3 seconds for STT test... Speak now!")
+                        setTimeout(() => mediaRecorder.stop(), 3000)
+                        
+                      } catch (error) {
+                        console.error('Error testing Deepgram STT:', error)
+                        const totalTime = Date.now() - startTime
+                        setTranscript(`Error: Could not access microphone (${totalTime}ms)`)
+                      }
+                    }}
                     variant="outline"
                     size="sm"
                     className="w-full"
@@ -703,7 +556,23 @@ function App() {
                     Test Deepgram STT (Record and Transcribe)
                   </Button>
                   <Button 
-                    onClick={testDeepLTranslation}
+                    onClick={() => {
+                      if (!wsRef.current || !isConnected) return
+                      
+                      const startTime = Date.now()
+                      const testText = "Hello, this is a test message for translation."
+                      const targetLang = userLanguage === "en" ? "ja" : "en"
+                      
+                      setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} → ${targetLang})`)
+                      
+                      wsRef.current.send(JSON.stringify({
+                        type: "test_deepl_translation",
+                        text: testText,
+                        source_language: userLanguage,
+                        target_language: targetLang,
+                        test_start_time: startTime
+                      }))
+                    }}
                     variant="outline"
                     size="sm"
                     className="w-full"
@@ -711,7 +580,21 @@ function App() {
                     Test DeepL Translation (Text to Text)
                   </Button>
                   <Button 
-                    onClick={testAzureTTS}
+                    onClick={() => {
+                      if (!wsRef.current || !isConnected) return
+                      
+                      const startTime = Date.now()
+                      const testText = "This is a test of Azure Text-to-Speech service."
+                      
+                      setTranscript(`Testing Azure TTS: "${testText}" (${userLanguage})`)
+                      
+                      wsRef.current.send(JSON.stringify({
+                        type: "test_azure_tts",
+                        text: testText,
+                        language: userLanguage,
+                        test_start_time: startTime
+                      }))
+                    }}
                     variant="outline"
                     size="sm"
                     className="w-full"
@@ -721,7 +604,6 @@ function App() {
                 </div>
               </div>
             )}
-            
           </CardContent>
         </Card>
 
@@ -731,27 +613,17 @@ function App() {
               <CardTitle className="flex items-center gap-2">
                 <Mic className="h-5 w-5" />
                 Speech Meter
-                {audioStreamRef.current?.active && (
-                  <Badge variant="default" className="text-xs bg-green-100 text-green-800">
-                    🎤 Live
-                  </Badge>
-                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Audio Level</span>
-                  <Badge variant={isVoiceActive ? "default" : "secondary"}>
-                    {isVoiceActive ? "Recording" : "Inactive"}
+                  <Badge variant={isRecording ? "default" : "secondary"}>
+                    {isRecording ? "Recording" : "Inactive"}
                   </Badge>
                 </div>
                 <Progress value={audioLevel} className="h-3" />
-                {audioLevel === 0 && isConnected && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    💡 Speak into your microphone to see audio levels
-                  </p>
-                )}
               </div>
             </CardContent>
           </Card>
@@ -833,41 +705,6 @@ function App() {
                 </div>
                 <div className="text-sm text-gray-600">Total</div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Pipeline Activity Log</CardTitle>
-            <CardDescription>
-              Detailed timestamped log of translation pipeline activity
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-64 overflow-y-auto bg-gray-50 rounded-lg border p-3">
-              {pipelineLogs.length === 0 ? (
-                <p className="text-gray-500 italic text-sm">
-                  {isConnected ? "Waiting for pipeline activity..." : "Connect to room to start logging"}
-                </p>
-              ) : (
-                <div className="space-y-1">
-                  {pipelineLogs.map((log, index) => (
-                    <div key={index} className="text-xs font-mono">
-                      <span className="text-gray-500">[{log.timestamp}]</span>
-                      <span className={`ml-2 font-semibold ${
-                        log.type === 'audio_to_deepgram' ? 'text-blue-600' :
-                        log.type === 'text_from_deepgram' ? 'text-green-600' :
-                        log.type === 'text_to_azure_tts' ? 'text-purple-600' :
-                        'text-orange-600'
-                      }`}>
-                        {log.step}:
-                      </span>
-                      <span className="ml-1 text-gray-700">{log.data}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </CardContent>
         </Card>
