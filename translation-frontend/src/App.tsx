@@ -125,28 +125,17 @@ function App() {
 
   const startAudioCapture = async () => {
     try {
-      console.log('[DEBUG] Requesting microphone access...')
+      console.log('[DEBUG] Requesting microphone access for audio level monitoring only...')
       
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.error('[DEBUG] getUserMedia not supported')
         return
       }
       
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices()
-        const audioInputs = devices.filter(device => device.kind === 'audioinput')
-        console.log('[DEBUG] Available audio input devices:', audioInputs.length)
-        audioInputs.forEach((device, index) => {
-          console.log(`[DEBUG] Device ${index}: ${device.label || 'Unknown'} (${device.deviceId})`)
-        })
-      } catch (deviceError) {
-        console.error('[DEBUG] Failed to enumerate devices:', deviceError)
-      }
-      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true
       })
-      console.log('[DEBUG] Microphone access granted, stream:', stream)
+      console.log('[DEBUG] Microphone access granted for monitoring, stream:', stream)
       streamRef.current = stream
       
       const audioContext = new AudioContext()
@@ -159,33 +148,7 @@ function App() {
       audioContextRef.current = audioContext
       analyserRef.current = analyser
       
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
-      console.log('[DEBUG] MediaRecorder created, mimeType:', mediaRecorder.mimeType)
-      mediaRecorderRef.current = mediaRecorder
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          console.log('[DEBUG] Audio data available, size:', event.data.size)
-          const reader = new FileReader()
-          reader.onload = () => {
-            const arrayBuffer = reader.result as ArrayBuffer
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-            console.log('[DEBUG] Sending audio data, base64 length:', base64.length)
-            
-            wsRef.current?.send(JSON.stringify({
-              type: 'audio_data',
-              audio: base64
-            }))
-          }
-          reader.readAsArrayBuffer(event.data)
-        }
-      }
-      
-      mediaRecorder.start(1000)
-      setIsRecording(true)
-      console.log('[DEBUG] MediaRecorder started')
+      console.log('[DEBUG] Audio level monitoring setup complete - ready for VAD-triggered recording')
       
       const cleanup = monitorAudioLevel()
       cleanupRef.current = cleanup
@@ -195,6 +158,68 @@ function App() {
         console.error('[DEBUG] Error name:', error.name)
         console.error('[DEBUG] Error message:', error.message)
       }
+    }
+  }
+
+  const startRealSpeechRecording = async () => {
+    try {
+      console.log('[DEBUG] Starting real speech recording (VAD triggered)...')
+      
+      if (!streamRef.current) {
+        console.error('[DEBUG] No audio stream available for recording')
+        return
+      }
+      
+      const mediaRecorder = new MediaRecorder(streamRef.current, {
+        mimeType: 'audio/webm;codecs=opus'
+      })
+      console.log('[DEBUG] Real speech MediaRecorder created, mimeType:', mediaRecorder.mimeType)
+      
+      const audioChunks: Blob[] = []
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          console.log('[DEBUG] Real speech audio chunk received, size:', event.data.size)
+          audioChunks.push(event.data)
+        }
+      }
+      
+      mediaRecorder.onstop = async () => {
+        console.log('[DEBUG] Real speech recording stopped, processing audio...')
+        if (audioChunks.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
+          console.log('[DEBUG] Real speech audio blob created, size:', audioBlob.size)
+          
+          const reader = new FileReader()
+          reader.onload = () => {
+            const arrayBuffer = reader.result as ArrayBuffer
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+            console.log('[DEBUG] Sending real speech audio data, base64 length:', base64.length)
+            
+            wsRef.current?.send(JSON.stringify({
+              type: 'audio_data',
+              audio: base64,
+              language: userLanguage,
+              timestamp: Date.now()
+            }))
+          }
+          reader.readAsArrayBuffer(audioBlob)
+        }
+        setIsRecording(false)
+      }
+      
+      mediaRecorder.start()
+      setIsRecording(true)
+      console.log('[DEBUG] Real speech recording started - will record for 3 seconds')
+      
+      setTimeout(() => {
+        console.log('[DEBUG] Stopping real speech recording after 3 seconds')
+        mediaRecorder.stop()
+      }, 3000)
+      
+    } catch (error) {
+      console.error('[DEBUG] Failed to start real speech recording:', error)
+      setIsRecording(false)
     }
   }
 
@@ -228,13 +253,24 @@ function App() {
     
     const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
     let animationId: number
+    let lastVADTrigger = 0
     
     const updateLevel = () => {
       if (!analyserRef.current) return
       
       analyserRef.current.getByteFrequencyData(dataArray)
       const average = dataArray.reduce((a, b) => a + b) / dataArray.length
-      setAudioLevel(Math.min(100, (average / 128) * 100))
+      const normalizedLevel = Math.min(100, (average / 128) * 100)
+      setAudioLevel(normalizedLevel)
+      
+      const now = Date.now()
+      if (normalizedLevel > 10 && !isRecording && wsRef.current?.readyState === WebSocket.OPEN) {
+        if (now - lastVADTrigger > 5000) {
+          console.log('[DEBUG] VAD triggered - starting real speech recording, level:', normalizedLevel)
+          lastVADTrigger = now
+          startRealSpeechRecording()
+        }
+      }
       
       animationId = requestAnimationFrame(updateLevel)
     }
@@ -312,96 +348,13 @@ function App() {
     }
   }
 
-  const testDeepgramSTT = async () => {
-    if (!wsRef.current || !isConnected) return
-    
-    const startTime = Date.now()
-    setTranscript("Starting Deepgram STT test...")
-    
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream)
-      const audioChunks: Blob[] = []
-      
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data)
-      }
-      
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
-        const arrayBuffer = await audioBlob.arrayBuffer()
-        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-        
-        wsRef.current?.send(JSON.stringify({
-          type: "test_deepgram_stt",
-          audio: base64Audio,
-          test_start_time: startTime
-        }))
-        
-        stream.getTracks().forEach(track => track.stop())
-      }
-      
-      mediaRecorder.start()
-      setTranscript("Recording 3 seconds for STT test... Speak now!")
-      setTimeout(() => mediaRecorder.stop(), 3000)
-      
-    } catch (error) {
-      console.error('Error testing Deepgram STT:', error)
-      const totalTime = Date.now() - startTime
-      setTranscript(`Error: Could not access microphone (${totalTime}ms)`)
-    }
-  }
 
-  const testDeepLTranslation = () => {
-    if (!wsRef.current || !isConnected) return
-    
-    const startTime = Date.now()
-    const testText = "Hello, this is a test message for translation."
-    const targetLang = userLanguage === "en" ? "ja" : "en"
-    
-    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} → ${targetLang})`)
-    
-    wsRef.current.send(JSON.stringify({
-      type: "test_deepl_translation",
-      text: testText,
-      source_language: userLanguage,
-      target_language: targetLang,
-      test_start_time: startTime
-    }))
-  }
 
-  const testAzureTTS = () => {
-    if (!wsRef.current || !isConnected) return
-    
-    const startTime = Date.now()
-    const testText = "This is a test of Azure Text-to-Speech service."
-    
-    setTranscript(`Testing Azure TTS: "${testText}" (${userLanguage})`)
-    
-    wsRef.current.send(JSON.stringify({
-      type: "test_azure_tts",
-      text: testText,
-      language: userLanguage,
-      test_start_time: startTime
-    }))
-  }
 
   useEffect(() => {
     updateLanguageConfig()
   }, [userLanguage])
 
-  const testFunctions = {
-    testDeepgramSTT,
-    testDeepLTranslation,
-    testAzureTTS
-  }
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      (window as any).testFunctions = testFunctions
-      console.log('Test functions loaded:', Object.keys(testFunctions))
-    }
-  }, [testFunctions])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -708,6 +661,7 @@ function App() {
             </div>
           </CardContent>
         </Card>
+
       </div>
     </div>
   )
