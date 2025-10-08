@@ -60,6 +60,7 @@ function App() {
   const preBufferRef = useRef<Blob[]>([])
   const preBufferRecorderRef = useRef<MediaRecorder | null>(null)
   const heartbeatIntervalRef = useRef<number | null>(null)
+  const isRecordingRef = useRef(false)
 
   const languages = [
     { code: 'en', name: 'English' },
@@ -432,9 +433,10 @@ function App() {
         
         setAudioLevel(normalizedLevel)
         
-        if (normalizedLevel > 5 && wsRef.current?.readyState === WebSocket.OPEN) {
+        if (normalizedLevel > 5 && wsRef.current?.readyState === WebSocket.OPEN && !isRecordingRef.current) {
           console.log('[VAD] Voice detected, starting recording for real speech transmission')
           addPipelineLog('Voice Detection', `Audio level: ${normalizedLevel}`, 'audio_to_deepgram')
+          isRecordingRef.current = true
           startRealSpeechRecording()
         }
         
@@ -479,6 +481,7 @@ function App() {
     }
     
     mediaRecorder.onstop = () => {
+      isRecordingRef.current = false
       if (audioChunks.length > 0) {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
         console.log(`[RECORD] Processing ${audioBlob.size} bytes of audio`)
@@ -512,6 +515,80 @@ function App() {
         mediaRecorder.stop()
       }
     }, 3000)
+  }
+
+  const testDeepgramSTT = async () => {
+    if (!wsRef.current || !isConnected) return
+    
+    const startTime = Date.now()
+    setTranscript("Starting Deepgram STT test...")
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      const audioChunks: Blob[] = []
+      
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data)
+      }
+      
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
+        const arrayBuffer = await audioBlob.arrayBuffer()
+        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+        
+        wsRef.current?.send(JSON.stringify({
+          type: "test_deepgram_stt",
+          audio: base64Audio,
+          test_start_time: startTime
+        }))
+        
+        stream.getTracks().forEach(track => track.stop())
+      }
+      
+      mediaRecorder.start()
+      setTranscript("Recording 3 seconds for STT test... Speak now!")
+      setTimeout(() => mediaRecorder.stop(), 3000)
+      
+    } catch (error) {
+      console.error('Error testing Deepgram STT:', error)
+      const totalTime = Date.now() - startTime
+      setTranscript(`Error: Could not access microphone (${totalTime}ms)`)
+    }
+  }
+
+  const testDeepLTranslation = () => {
+    if (!wsRef.current || !isConnected) return
+    
+    const startTime = Date.now()
+    const testText = "Hello, this is a test message for translation."
+    const targetLang = userLanguage === "en" ? "ja" : "en"
+    
+    setTranscript(`Testing DeepL translation: "${testText}" (${userLanguage} → ${targetLang})`)
+    
+    wsRef.current.send(JSON.stringify({
+      type: "test_deepl_translation",
+      text: testText,
+      source_language: userLanguage,
+      target_language: targetLang,
+      test_start_time: startTime
+    }))
+  }
+
+  const testAzureTTS = () => {
+    if (!wsRef.current || !isConnected) return
+    
+    const startTime = Date.now()
+    const testText = "This is a test of Azure Text-to-Speech service."
+    
+    setTranscript(`Testing Azure TTS: "${testText}" (${userLanguage})`)
+    
+    wsRef.current.send(JSON.stringify({
+      type: "test_azure_tts",
+      text: testText,
+      language: userLanguage,
+      test_start_time: startTime
+    }))
   }
 
 
@@ -612,6 +689,38 @@ function App() {
                 )}
               </Button>
             </div>
+            
+            {isConnected && (
+              <div className="mt-4 space-y-3">
+                <h3 className="text-sm font-medium text-gray-700">Individual Service Tests</h3>
+                <div className="grid grid-cols-1 gap-2">
+                  <Button 
+                    onClick={testDeepgramSTT}
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                  >
+                    Test Deepgram STT (Record & Transcribe)
+                  </Button>
+                  <Button 
+                    onClick={testDeepLTranslation}
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                  >
+                    Test DeepL Translation (Text → Text)
+                  </Button>
+                  <Button 
+                    onClick={testAzureTTS}
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                  >
+                    Test Azure TTS (Text → Speech)
+                  </Button>
+                </div>
+              </div>
+            )}
             
           </CardContent>
         </Card>
