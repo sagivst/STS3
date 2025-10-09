@@ -289,7 +289,7 @@ function App() {
       setAudioLevel(normalizedLevel)
       
       const now = Date.now()
-      if (normalizedLevel > 10 && !isRecording && wsRef.current?.readyState === WebSocket.OPEN) {
+      if (normalizedLevel > 3 && !isRecording && wsRef.current?.readyState === WebSocket.OPEN) {
         if (now - lastVADTrigger > 5000) {
           console.log('[DEBUG] VAD triggered - starting real speech recording, level:', normalizedLevel)
           lastVADTrigger = now
