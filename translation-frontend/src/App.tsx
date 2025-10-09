@@ -29,6 +29,24 @@ function App() {
     azure_tts: 0
   })
 
+  const [pipelineLogs, setPipelineLogs] = useState<Array<{
+    timestamp: string;
+    step: string;
+    data: string;
+    type: 'audio_to_deepgram' | 'text_from_deepgram' | 'text_to_azure_tts' | 'audio_from_azure_tts';
+  }>>([])
+
+  const addPipelineLog = (step: string, data: string, type: 'audio_to_deepgram' | 'text_from_deepgram' | 'text_to_azure_tts' | 'audio_from_azure_tts') => {
+    const now = new Date()
+    const timestamp = now.toLocaleTimeString('en-US', { 
+      hour12: false, 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit'
+    }) + '.' + now.getMilliseconds().toString().padStart(3, '0')
+    setPipelineLogs(prev => [...prev.slice(-19), { timestamp, step, data, type }])
+  }
+
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -65,9 +83,11 @@ function App() {
         
         if (message.type === 'transcript') {
           console.log('[DEBUG] Setting transcript:', message.text)
+          addPipelineLog('Text from Deepgram STT', message.text, 'text_from_deepgram')
           setTranscript(message.text)
         } else if (message.type === 'translated_audio') {
           console.log('[DEBUG] Received translated audio, hex length:', message.audio?.length || 0)
+          addPipelineLog('Audio from Azure TTS', `Audio data: ${message.audio.length} chars`, 'audio_from_azure_tts')
           playTranslatedAudio(message.audio)
         } else if (message.type === 'latency_update') {
           setLatencyMetrics(message.metrics)
@@ -84,10 +104,13 @@ function App() {
           const latency = message.latency
           const totalTime = message.total_time || latency
           
+          addPipelineLog(`${service.toUpperCase()} Test`, `${messageText} (${latency}ms)`, 'text_from_deepgram')
+          
           setTranscript(`${service.toUpperCase()} Test Complete: ${messageText} (Processing: ${latency}ms, Total: ${totalTime}ms)`)
           
           if (service === 'azure_tts' && message.audio) {
             console.log('[DEBUG] Playing TTS test audio, hex length:', message.audio.length)
+            addPipelineLog('Test Audio from Azure TTS', `Audio data: ${message.audio.length} chars`, 'audio_from_azure_tts')
             playTranslatedAudio(message.audio)
           }
         }
@@ -195,6 +218,8 @@ function App() {
             const arrayBuffer = reader.result as ArrayBuffer
             const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
             console.log('[DEBUG] Sending real speech audio data, base64 length:', base64.length)
+            
+            addPipelineLog('Audio to Deepgram STT', `Audio data: ${base64.length} chars`, 'audio_to_deepgram')
             
             wsRef.current?.send(JSON.stringify({
               type: 'audio_data',
@@ -657,6 +682,87 @@ function App() {
                   {getTotalLatency().toFixed(0)}ms
                 </div>
                 <div className="text-sm text-gray-600">Total</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Pipeline Activity Log</CardTitle>
+            <CardDescription>
+              Detailed timestamped log of translation pipeline activity
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="max-h-64 overflow-y-auto bg-gray-50 rounded-lg border p-3" id="pipeline-log-container">
+                {pipelineLogs.length === 0 ? (
+                  <p className="text-gray-500 italic text-sm">
+                    {isConnected ? "Waiting for pipeline activity..." : "Connect to room to start logging"}
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {pipelineLogs.map((log, index) => (
+                      <div key={index} className="text-xs font-mono">
+                        <span className="text-gray-500">[{log.timestamp}]</span>
+                        <span className={`ml-2 font-semibold ${
+                          log.type === 'audio_to_deepgram' ? 'text-blue-600' :
+                          log.type === 'text_from_deepgram' ? 'text-green-600' :
+                          log.type === 'text_to_azure_tts' ? 'text-purple-600' :
+                          'text-orange-600'
+                        }`}>
+                          {log.step}:
+                        </span>
+                        <span className="ml-1 text-gray-700">{log.data}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={() => {
+                    const logText = pipelineLogs.map(log => 
+                      `[${log.timestamp}] ${log.step}: ${log.data}`
+                    ).join('\n')
+                    navigator.clipboard.writeText(logText)
+                  }}
+                  variant="outline"
+                  size="sm"
+                  disabled={pipelineLogs.length === 0}
+                >
+                  Copy to Clipboard
+                </Button>
+                <Button 
+                  onClick={() => {
+                    localStorage.setItem('sts3-pipeline-logs', JSON.stringify(pipelineLogs))
+                  }}
+                  variant="outline"
+                  size="sm"
+                  disabled={pipelineLogs.length === 0}
+                >
+                  Save to LocalStorage
+                </Button>
+                <Button 
+                  onClick={() => {
+                    const logText = pipelineLogs.map(log => 
+                      `[${log.timestamp}] ${log.step}: ${log.data}`
+                    ).join('\n')
+                    const blob = new Blob([logText], { type: 'text/plain' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `sts3-pipeline-log-${new Date().toISOString()}.txt`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  variant="outline"
+                  size="sm"
+                  disabled={pipelineLogs.length === 0}
+                >
+                  Export/Download
+                </Button>
               </div>
             </div>
           </CardContent>
